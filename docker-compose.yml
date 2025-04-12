@@ -1,0 +1,21 @@
+services:
+  xxxbot:
+    image: nansy/xxxbot:849
+    container_name: XXXBot
+    restart: unless-stopped
+    ports:
+      - "9090:9090" # 管理后台端口
+      - "3000:3000" # WeTTy终端端口
+    volumes:
+      - xxxbot:/app
+      - redis_data:/var/lib/redis
+    environment:
+      - ADMIN_USERNAME=your_username
+      - ADMIN_PASSWORD=your_secure_password
+    build: .
+
+volumes:
+  redis_data:
+    name: redis_data
+  xxxbot:
+    name: XXXBot
