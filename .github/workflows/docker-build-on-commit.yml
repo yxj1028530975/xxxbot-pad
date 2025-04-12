@@ -55,6 +55,6 @@ jobs:
           push: true
           platforms: linux/amd64,linux/arm64
           tags: |
-            ${{ vars.DOCKERHUB_USERNAME }}/xxxbot:849
-          cache-from: type=registry,ref=${{ vars.DOCKERHUB_USERNAME }}/XXXBot:latest
+            ${{ vars.DOCKERHUB_USERNAME }}/xxxbot-pad:latest
+          cache-from: type=registry,ref=${{ vars.DOCKERHUB_USERNAME }}/xxxbot-pad:latest
           cache-to: type=inline,mode=max

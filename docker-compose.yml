@@ -1,7 +1,7 @@
 services:
   xxxbot:
-    image: nansy/xxxbot:849
-    container_name: XXXBot
+    image: nansy/xxxbot-pad:latest
+    container_name: xxxbot-pad
     restart: unless-stopped
     ports:
       - "9090:9090" # 管理后台端口
@@ -17,5 +17,5 @@ services:
 volumes:
   redis_data:
     name: redis_data
-  xxxbot:
-    name: XXXBot
+  xxxbot-pad:
+    name: xxxbot-pad
