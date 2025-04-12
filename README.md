@@ -183,23 +183,27 @@ XXXBot 是一个基于微信的智能机器人系统，通过整合多种 API �
 
 > 💡 **注意**：Docker 环境会自动启动 Redis 和 PAD 服务，无需手动启动。这是通过 `entrypoint.sh` 脚本实现的。
 
-1. **克隆代码库**
+1. **使用 Docker Compose 一键部署**
 
    ```bash
-   git clone https://github.com/NanSsye/XXXBot.git
-   cd XXXBot
+   # 克隆代码库
+   git clone https://github.com/NanSsye/xxxbot-pad.git
+   cd xxxbot-pad
+
+   # 启动服务
+   docker-compose up -d
    ```
 
-2. **构建 Docker 镜像**
+   这将自动拉取最新的镜像并启动服务，所有数据将保存在 Docker 卷中。
 
-   ```bash
-   docker build -t xxxbot .
-   ```
+2. **自定义管理员账号密码**（可选）
 
-3. **启动容器**
+   编辑 docker-compose.yml 文件，修改环境变量：
 
-   ```bash
-   docker run -d -p 9090:9090 -v $(pwd)/data:/app/data -v $(pwd)/config:/app/config --name xxxbot xxxbot
+   ```yaml
+   environment:
+     - ADMIN_USERNAME=your_username # 修改为您想要的用户名
+     - ADMIN_PASSWORD=your_password # 修改为您想要的密码
    ```
 
 ### 🔍 访问后台
@@ -333,8 +337,9 @@ class YourPlugin(PluginBase):
 6. **Docker 部署问题** 🐳
 
    - 确认 Docker 容器是否正常运行：`docker ps`
-   - 查看容器日志：`docker logs xxxbot`
-   - 检查数据卷挂载是否正确
+   - 查看容器日志：`docker logs xxxbot-pad`
+   - 重启容器：`docker-compose restart`
+   - 查看卷数据：`docker volume ls`
    - 💡 注意：Docker 容器内会自动启动 PAD 和 Redis 服务，无需手动启动
    - ⚠️ Windows 用户注意：Docker 容器使用的是 Linux 环境，不能直接使用 Windows 版的可执行文件
 
