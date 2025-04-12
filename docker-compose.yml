@@ -1,6 +1,6 @@
 services:
   xxxbot:
-    image: nansy/xxxbot-pad:latest
+    image: nanssye/xxxbot-pad:latest
     container_name: xxxbot-pad
     restart: unless-stopped
     ports:
