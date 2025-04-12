@@ -177,19 +177,44 @@ class XYBot:
             is_group=message["IsGroup"]
         )
 
-        aeskey, cdnmidimgurl = None, None
+        aeskey, cdnmidimgurl, length, md5 = None, None, None, None
         try:
             root = ET.fromstring(message["Content"])
             img_element = root.find('img')
             if img_element is not None:
                 aeskey = img_element.get('aeskey')
                 cdnmidimgurl = img_element.get('cdnmidimgurl')
+                length = img_element.get('length')
+                md5 = img_element.get('md5')
+                logger.debug(f"解析图片XML成功: aeskey={aeskey}, length={length}, md5={md5}")
         except Exception as e:
             logger.error("解析图片消息失败: {}, 内容: {}", e, message["Content"])
             return
 
-        if aeskey and cdnmidimgurl:
-            message["Content"] = await self.bot.download_image(aeskey, cdnmidimgurl)
+        # 尝试使用新的get_msg_image方法下载图片
+        try:
+            if length and length.isdigit():
+                img_length = int(length)
+                logger.debug(f"尝试使用get_msg_image下载图片: MsgId={message.get('MsgId')}, length={img_length}")
+                image_data = await self.bot.get_msg_image(message.get('MsgId'), message["FromWxid"], img_length)
+                if image_data and len(image_data) > 0:
+                    import base64
+                    message["Content"] = base64.b64encode(image_data).decode('utf-8')
+                    logger.debug(f"使用get_msg_image下载图片成功: {len(image_data)} 字节")
+                else:
+                    logger.warning("使用get_msg_image下载图片失败，尝试使用download_image")
+                    if aeskey and cdnmidimgurl:
+                        message["Content"] = await self.bot.download_image(aeskey, cdnmidimgurl)
+            elif aeskey and cdnmidimgurl:
+                logger.debug("使用download_image下载图片")
+                message["Content"] = await self.bot.download_image(aeskey, cdnmidimgurl)
+        except Exception as e:
+            logger.error(f"下载图片失败: {e}")
+            if aeskey and cdnmidimgurl:
+                try:
+                    message["Content"] = await self.bot.download_image(aeskey, cdnmidimgurl)
+                except Exception as e2:
+                    logger.error(f"备用方法下载图片也失败: {e2}")
 
         if self.ignore_check(message["FromWxid"], message["SenderWxid"]):
             if self.ignore_protection or not protector.check(14400):

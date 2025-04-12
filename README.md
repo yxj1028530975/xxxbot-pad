@@ -4,6 +4,27 @@
 
 XXXBot 是一个基于微信的智能机器人系统，通过整合多种 API 和功能，提供了丰富的交互体验。本系统包含管理后台界面，支持插件扩展，具备联系人管理、文件管理、系统状态监控等功能，同时与人工智能服务集成，提供智能对话能力。系统支持多种微信接口，包括 PAD 协议和 WeChatAPI，可根据需要灵活切换。
 
+## 🚀 快速开始
+
+<table>
+  <tr>
+    <td width="65%">
+      <h3>💬 加入XXXBot交流群</h3>
+      <p>扫描右侧的二维码加入官方交流群，获取：</p>
+      <ul>
+        <li>💡 <strong>最新功能更新</strong>和使用技巧</li>
+        <li>👨‍💻 <strong>技术支持</strong>和问题解答</li>
+        <li>👥 与其他用户<strong>交流经验</strong></li>
+        <li>📝 <strong>插件开发</strong>和定制化帮助</li>
+      </ul>
+    </td>
+    <td width="35%" align="center">
+      <img src="https://github.com/user-attachments/assets/e1041478-02d5-44b1-aa09-23d1d5f2710d" alt="XXXBot微信群" width="220">
+      <p><strong>XXXBot交流群</strong></p>
+    </td>
+  </tr>
+</table>
+
 ## ✨ 主要特性
 
 ### 1. 💻 管理后台
@@ -55,8 +76,8 @@ XXXBot 是一个基于微信的智能机器人系统，通过整合多种 API �
 1. **克隆代码库**
 
    ```bash
-   git clone https://github.com/NanSsye/XXXBot.git
-   cd XXXBot
+   git clone https://github.com/NanSsye/xxxbot-pad.git
+   cd xxxbot-pad
    ```
 
 2. **安装依赖**
@@ -186,26 +207,6 @@ XXXBot 是一个基于微信的智能机器人系统，通过整合多种 API �
 - 🌐 打开浏览器访问 `http://localhost:9090` 进入管理界面
 - 👤 默认用户名：`admin`
 - 🔑 默认密码：`admin123`
-
-## ⚙️ 配置详解
-
-### 📓 主配置文件
-
-```toml
-[XXXBot]
-admins = ["admin_wxid"]  # 管理员微信ID列表
-enable_plugin_market = true  # 是否启用插件市场
-
-[Redis]
-host = "localhost"
-port = 6378
-db = 0
-password = ""
-
-[PAD]
-enable = true
-api_url = "http://localhost:9011"
-```
 
 ### 🤖 Dify 插件配置
 
@@ -386,8 +387,95 @@ XXXBot/
 
 ## 鸣谢
 
-特别感谢所有贡献者和使用的开源项目。
+本项目的开发离不开以下作者和项目的支持与贡献：
+
+<table style="border-collapse: collapse; border: none;">
+  <tr style="border: none;">
+    <td width="180" align="center" style="border: none; padding: 10px;">
+      <div style="border-radius: 50%; overflow: hidden; width: 120px; height: 120px; margin: 0 auto;">
+        <img src="https://avatars.githubusercontent.com/u/83214045" width="120" height="120">
+      </div>
+      <br>
+      <strong style="font-size: 16px;">HenryXiaoYang</strong>
+      <br>
+      <a href="https://github.com/HenryXiaoYang" style="text-decoration: none; color: #0366d6;">个人主页</a>
+    </td>
+    <td style="border: none; padding: 10px;">
+      <p style="margin-bottom: 8px; font-size: 15px;">项目：<a href="https://github.com/HenryXiaoYang/XYBotV2" style="text-decoration: none; color: #0366d6;">XYBotV2</a> - 本项目的重要参考源</p>
+      <p style="margin-top: 0; font-size: 15px;">提供了微信机器人的基础架构和核心功能，为本项目的开发提供了宝贵的参考。</p>
+    </td>
+  </tr>
+  <tr style="border: none;">
+    <td width="180" align="center" style="border: none; padding: 10px;">
+      <div style="border-radius: 50%; overflow: hidden; width: 120px; height: 120px; margin: 0 auto;">
+        <img src="https://avatars.githubusercontent.com/u/178422005" width="120" height="120">
+      </div>
+      <br>
+      <strong style="font-size: 16px;">heaven2028</strong>
+      <br>
+      <a href="https://github.com/heaven2028" style="text-decoration: none; color: #0366d6;">个人主页</a>
+    </td>
+    <td style="border: none; padding: 10px;">
+      <p style="margin-bottom: 8px; font-size: 15px;">与本项目作者共同完成的开发工作</p>
+      <p style="margin-top: 0; font-size: 15px;">在功能扩展、界面设计和系统优化方面做出了重要贡献。</p>
+    </td>
+  </tr>
+</table>
+
+同时感谢所有其他贡献者和使用的开源项目。
 
 ## 联系方式
 
-GitHub: [https://github.com/NanSsye](https://github.com/NanSsye)
+- **GitHub**: [https://github.com/NanSsye](https://github.com/NanSsye)
+- **官方交流群**：请查看上方[快速开始](#快速开始)部分的二维码
+
+## 💻 管理后台界面展示
+
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <img src="https://github.com/user-attachments/assets/2f716d30-07df-4e50-8b2d-d18371a7b4ed" width="400">
+    </td>
+    <td width="50%" align="center">
+      <img src="https://github.com/user-attachments/assets/50bc4c43-930b-4332-ad07-aaeb432af37f" width="400">
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <img src="https://github.com/user-attachments/assets/a60c5ce4-bae4-4eed-82a6-e9f0f8189b84" width="400">
+    </td>
+    <td width="50%" align="center">
+      <img src="https://github.com/user-attachments/assets/5aaa5450-7c13-43a1-9310-471af304408d" width="400">
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <img src="https://github.com/user-attachments/assets/267b8be9-8287-4ab8-8ad7-e01e17099296" width="400">
+    </td>
+    <td width="50%" align="center">
+      <img src="https://github.com/user-attachments/assets/adfee5d7-dbfb-4ab4-9f7d-0e1321093cd3" width="400">
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <img src="https://github.com/user-attachments/assets/05e8f4c0-6ab2-4c60-b168-36bb62d40058" width="400">
+    </td>
+    <td width="50%" align="center">
+      <img src="https://github.com/user-attachments/assets/5c77ef23-85d6-40f3-9f93-920f115821b9" width="400">
+    </td>
+  </tr>
+</table>
+
+<table>
+  <tr>
+    <td width="33%" align="center">
+      <img src="https://github.com/user-attachments/assets/f61afa92-d7b3-4445-9cd1-1d72aa35acb9" width="260">
+    </td>
+    <td width="33%" align="center">
+      <img src="https://github.com/user-attachments/assets/81473990-dc0e-435a-8b45-0732d92d3201" width="260">
+    </td>
+    <td width="33%" align="center">
+      <img src="https://github.com/user-attachments/assets/f82dd319-69f0-4585-97df-799bed5d2948" width="260">
+    </td>
+  </tr>
+</table>

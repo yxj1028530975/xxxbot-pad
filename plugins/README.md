@@ -342,9 +342,9 @@ async def on_disable(self):
 
 ## 🔌 API 接口
 
-### WechatAPIClient
+### WechatAPIClient (PAD 协议)
 
-`WechatAPIClient` 提供了与微信交互的各种方法：
+`WechatAPIClient` 提供了与微信交互的各种方法，本项目使用 PAD 协议与微信进行通信：
 
 #### 发送消息
 
@@ -377,8 +377,27 @@ contacts = await bot.get_contacts()
 # 获取群成员列表
 members = await bot.get_chatroom_members(group_wxid)
 
+# 获取群成员详细信息
+member_info = await bot.get_chatroom_member_info(group_wxid, member_wxid)
+
 # 获取用户信息
 user_info = await bot.get_user_info(wxid)
+```
+
+#### 朋友圈相关操作
+
+```python
+# 获取朋友圈列表
+pyq_list = await bot.get_friend_circle_list()
+
+# 获取指定用户的朋友圈
+user_pyq = await bot.get_user_friend_circle(wxid)
+
+# 点赞朋友圈
+await bot.like_friend_circle(pyq_id)
+
+# 评论朋友圈
+await bot.comment_friend_circle(pyq_id, "评论内容")
 ```
 
 #### 其他操作
@@ -392,7 +411,87 @@ await bot.create_chatroom(wxids)
 
 # 邀请用户加入群聊
 await bot.invite_chatroom_members(chatroom_wxid, wxids)
+
+# 同步消息
+await bot.sync_message(scene=0)  # scene=0 同步消息，scene=1 同步摘要，scene=7 初始化
 ```
+
+## 🔗 PAD 协议 API 路径参考
+
+下面是 PAD 协议的主要 API 路径参考，开发者可以了解底层实现。所有路径在实际调用时需要添加 `/VXAPI` 前缀，但在使用 `WechatAPIClient` 时会自动处理。
+
+### 消息相关 API
+
+| API 路径         | 功能描述     | 主要参数                                             |
+| ---------------- | ------------ | ---------------------------------------------------- |
+| `/Msg/Sync`      | 同步消息     | `Scene`: 0(同步消息), 1(同步摘要), 7(初始化), `Wxid` |
+| `/Msg/SendTxt`   | 发送文本消息 | `ToWxid`, `Content`, `At`(群@用户)                   |
+| `/Msg/UploadImg` | 发送图片     | `ToWxid`, `Base64`                                   |
+| `/Msg/SendVoice` | 发送语音     | `ToWxid`, `Base64`, `VoiceTime`(时长), `Type`        |
+| `/Msg/SendVideo` | 发送视频     | `ToWxid`, `Base64`, `ImageBase64`(封面)              |
+| `/Msg/SendEmoji` | 发送表情     | `ToWxid`, `Md5`, `TotalLen`                          |
+| `/Msg/ShareLink` | 发送链接     | `ToWxid`, `Title`, `Desc`, `Url`, `ThumbUrl`         |
+| `/Msg/ShareCard` | 分享名片     | `ToWxid`, `CardWxId`, `CardNickName`                 |
+| `/Msg/Revoke`    | 撤回消息     | `ToUserName`, `ClientMsgId`, `NewMsgId`              |
+
+### 朋友圈相关 API
+
+| API 路径                    | 功能描述            | 主要参数                                           |
+| --------------------------- | ------------------- | -------------------------------------------------- |
+| `/FriendCircle/GetList`     | 获取朋友圈列表      | `Wxid`, `Maxid`, `Fristpagemd5`                    |
+| `/FriendCircle/GetDetail`   | 获取指定用户朋友圈  | `Wxid`, `Towxid`, `Maxid`, `Fristpagemd5`          |
+| `/FriendCircle/GetIdDetail` | 获取指定朋友圈详情  | `Wxid`, `Id`                                       |
+| `/FriendCircle/Comment`     | 点赞/评论朋友圈     | `Wxid`, `Id`, `Type`(1 点赞,2 评论), `Content`     |
+| `/FriendCircle/Operation`   | 朋友圈操作          | `Wxid`, `Id`, `Type`(1 删除,2 设为隐私,3 设为公开) |
+| `/FriendCircle/Upload`      | 上传朋友圈图片/视频 | `Wxid`, `Base64`                                   |
+| `/FriendCircle/Messages`    | 发布朋友圈          | `Wxid`, `Content`, `ISVideo`                       |
+
+### 群组相关 API
+
+| API 路径                         | 功能描述       | 主要参数                                 |
+| -------------------------------- | -------------- | ---------------------------------------- |
+| `/Group/CreateChatRoom`          | 创建群聊       | `Wxid`, `ToWxids`(多个用户 ID)           |
+| `/Group/AddChatRoomMember`       | 增加群成员     | `Wxid`, `ChatRoomName`(群 ID), `ToWxids` |
+| `/Group/DelChatRoomMember`       | 删除群成员     | `Wxid`, `ChatRoomName`, `ToWxids`        |
+| `/Group/GetChatRoomMemberDetail` | 获取群成员     | `Wxid`, `QID`(群 ID)                     |
+| `/Group/GetSomeMemberInfo`       | 获取群成员信息 | `Wxid`, `QID`, `ToWxid`                  |
+| `/Group/SetChatRoomName`         | 设置群名称     | `Wxid`, `QID`, `Content`                 |
+| `/Group/SetChatRoomAnnouncement` | 设置群公告     | `Wxid`, `QID`, `Content`                 |
+| `/Group/Quit`                    | 退出群聊       | `Wxid`, `QID`                            |
+
+### 好友相关 API
+
+| API 路径                    | 功能描述       | 主要参数                                                   |
+| --------------------------- | -------------- | ---------------------------------------------------------- |
+| `/Friend/GetContractList`   | 获取通讯录好友 | `Wxid`, `CurrentWxcontactSeq`, `CurrentChatRoomContactSeq` |
+| `/Friend/GetContractDetail` | 获取好友详情   | `Wxid`, `Towxids`                                          |
+| `/Friend/Search`            | 搜索联系人     | `Wxid`, `ToUserName`                                       |
+| `/Friend/SendRequest`       | 发送好友请求   | `Wxid`, `V1`, `V2`, `Scene`, `VerifyContent`               |
+| `/Friend/PassVerify`        | 通过好友请求   | `Wxid`, `V1`, `V2`, `Scene`                                |
+| `/Friend/Delete`            | 删除好友       | `Wxid`, `ToWxid`                                           |
+| `/Friend/SetRemarks`        | 设置好友备注   | `Wxid`, `ToWxid`, `Remarks`                                |
+
+### 工具相关 API
+
+| API 路径               | 功能描述 | 主要参数                             |
+| ---------------------- | -------- | ------------------------------------ |
+| `/Tools/DownloadImg`   | 下载图片 | `Wxid`, `ToWxid`, `MsgId`, `DataLen` |
+| `/Tools/DownloadVideo` | 下载视频 | `Wxid`, `ToWxid`, `MsgId`, `DataLen` |
+| `/Tools/DownloadVoice` | 下载语音 | `Wxid`, `MsgId`, `Length`            |
+| `/Tools/DownloadFile`  | 下载文件 | `Wxid`, `DataLen`, `AttachId`        |
+| `/Tools/EmojiDownload` | 下载表情 | `Wxid`, `Md5`                        |
+| `/Tools/UploadFile`    | 上传文件 | `Wxid`, `Base64`                     |
+
+### 登录相关 API
+
+| API 路径           | 功能描述       | 主要参数                 |
+| ------------------ | -------------- | ------------------------ |
+| `/Login/GetQR`     | 获取登录二维码 | `DeviceID`, `DeviceName` |
+| `/Login/CheckQR`   | 检测二维码状态 | `uuid`                   |
+| `/Login/HeartBeat` | 心跳包         | `wxid`                   |
+| `/Login/LogOut`    | 退出登录       | `wxid`                   |
+
+以上只是 PAD 协议的部分 API 路径，完整的 API 文档请参考官方文档或平台提供的 Swagger 文档。
 
 ## 🏆 最佳实践
 
@@ -454,9 +553,68 @@ async def on_disable(self):
 XXXBot 提供了多个示例插件，可以作为开发参考：
 
 - **ExamplePlugin**：基本插件示例，展示各种消息处理和定时任务
-- **Dify**：集成 Dify API 的 AI 对话插件
+- **Dify**：集成 Dify API 的 AI 对话插件，支持文本对话和图片识别功能
 - **YujieSajiao**：语音处理插件示例
 - **GetWeather**：天气查询插件示例
+
+### Dify 插件图片识别功能
+
+Dify 插件支持图片识别功能，可以分析和描述用户发送的图片内容。使用方法如下：
+
+1. **发送图片**：用户先发送一张图片到聊天
+2. **发送文本查询**：然后发送文本消息，如“这张图片是什么”或“描述一下这张图片”
+3. **接收回复**：插件会自动处理图片，并返回 AI 对图片的分析结果
+
+技术实现：
+
+- 插件会自动缓存用户最近发送的图片
+- 当用户发送文本消息时，插件会检查是否有缓存的图片
+- 如果有缓存的图片，插件会将图片与文本查询一起发送给 Dify API
+- Dify API 处理图片和文本，返回分析结果
+
+注意事项：
+
+- 图片缓存有时间限制，默认为 60 秒
+- 发送文本查询时应在图片发送后的缓存时间内进行
+- 支持各种常见图片格式，包括 JPEG、PNG 等
+
+示例代码：
+
+```python
+# 处理图片消息
+@on_image_message(priority=20)
+async def handle_image(self, bot: WechatAPIClient, message: dict):
+    if not self.enable:
+        return
+
+    # 获取图片内容并缓存
+    image_content = await self.download_and_process_image(bot, message)
+    if image_content:
+        self.image_cache[message["FromWxid"]] = {
+            "content": image_content,
+            "timestamp": time.time()
+        }
+        logger.info(f"已缓存用户 {message['FromWxid']} 的图片")
+
+# 处理文本消息
+@on_text_message(priority=20)
+async def handle_text(self, bot: WechatAPIClient, message: dict):
+    if not self.enable:
+        return
+
+    # 检查是否有缓存的图片
+    image_content = await self.get_cached_image(message["FromWxid"])
+    files = []
+
+    if image_content:
+        # 将图片上传到 Dify
+        file_id = await self.upload_file_to_dify(image_content, "image/jpeg", message["FromWxid"])
+        if file_id:
+            files = [file_id]
+
+    # 调用 Dify API 处理文本和图片
+    await self.dify(bot, message, message["Content"], files=files)
+```
 
 ## ❓ 常见问题
 
@@ -477,6 +635,13 @@ XXXBot 提供了多个示例插件，可以作为开发参考：
 1. 检查定时任务装饰器参数是否正确
 2. 检查插件是否启用
 3. 检查系统时间是否正确
+
+### Dify 图片识别功能不工作
+
+1. 检查图片发送后是否在缓存时间内（60 秒）发送了文本查询
+2. 检查日志中是否有“已缓存用户 xxx 的图片”的信息
+3. 确认 Dify API 配置是否正确，包括 API 密钥和基础 URL
+4. 确认使用的 Dify 模型是否支持图片识别功能
 
 ---
 
