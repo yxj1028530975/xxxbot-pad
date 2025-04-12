@@ -1,0 +1,206 @@
+{
+  "success": true,
+  "data": [
+    {
+      "wxid": "weixin",
+      "name": "微信团队",
+      "nickname": "微信团队",
+      "remark": "",
+      "avatar": "https://wx.qlogo.cn/mmhead/ver_1/g2LwlCicXicoo6M4YrVWuJo7NpXY6YIBXeOAmezPJFJK4JLAeA55GGoeDJwNVwrvbSWBOgDGenLNhWHGS26raJcJjkg45pibDtBRjx5uX5gSRc/132",
+      "type": "friend",
+      "online": true,
+      "starred": false
+    },
+    {
+      "wxid": "fmessage",
+      "name": "朋友推荐消息",
+      "nickname": "朋友推荐消息",
+      "remark": "",
+      "avatar": "https://wx.qlogo.cn/mmhead/ver_1/oCf7dsKgFORRfll8XicHRCJUxJwXfanMF1CgFaO37095m65h5OribmbPgCsfAfLj9C2pQsJ6Zw0H5icnlTJWGFMpg/132",
+      "type": "friend",
+      "online": true,
+      "starred": false
+    },
+    {
+      "wxid": "medianote",
+      "name": "语音记事本",
+      "nickname": "语音记事本",
+      "remark": "",
+      "avatar": "https://wx.qlogo.cn/mmhead/ver_1/AxutRTVl8THV0dpD4SPxjv24OoVjIvdpa0zAILicdytk2ACicPyTQu3Qiaq3do01q9VkV9s1ibV02sWEsnAAYfIyNw/132",
+      "type": "friend",
+      "online": true,
+      "starred": false
+    },
+    {
+      "wxid": "floatbottle",
+      "name": "漂流瓶",
+      "nickname": "漂流瓶",
+      "remark": "",
+      "avatar": "https://wx.qlogo.cn/mmhead/ver_1/wn0eicMy0hq7rQz6ja88ygV6PCVuFoK90E61ozUg4Ebhe5mg3emN58lzWYys9UlHhPkEibm93bT5SA2eKIcSPzZQ/132",
+      "type": "friend",
+      "online": true,
+      "starred": false
+    },
+    {
+      "wxid": "gh_759ed69b2094",
+      "name": "哈啰顺风车",
+      "nickname": "哈啰顺风车",
+      "remark": "",
+      "avatar": "https://wx.qlogo.cn/mmhead/ver_1/JIC1GpALib1nW8EksnU08RBrNEMiaggZmds8CnvHkTDXBqZH4aCz2XzvEsDcQTaibibxwN3ykYiaPyt1yjaEzDQAJw0muskLcQ4fdW1iapibFQ7xPk/132",
+      "type": "official",
+      "online": true,
+      "starred": false
+    },
+    {
+      "wxid": "gh_0fd7f3ae028b",
+      "name": "成都住建",
+      "nickname": "成都住建",
+      "remark": "",
+      "avatar": "https://wx.qlogo.cn/mmhead/ver_1/wBlPTRmSEYN2oX6KhAeu2SbaWiaFTWDenQ8QV3n9eqSibVAYHGaic8f8LJJ6NicAsnsuwxNK3ulsWaXLrDTDm9s0ib0Tk9UUTsXCk58yefAe0dTg/132",
+      "type": "official",
+      "online": true,
+      "starred": false
+    },
+    {
+      "wxid": "gh_3dfda90e39d6",
+      "name": "微信支付",
+      "nickname": "微信支付",
+      "remark": "",
+      "avatar": "https://wx.qlogo.cn/mmhead/ver_1/SoM5dib27LWAluO2iceQb84ib0ibK1lQOfjcGvM3P2hgm2RnXouQQBV1e7KibVu1xicuibyn7HVavG2z9GVvRrgMu8Ihha2Re5IsLWRZoZLjxNNT6M/132",
+      "type": "official",
+      "online": true,
+      "starred": false
+    },
+    {
+      "wxid": "wxid_lnbsshdobq7y22",
+      "name": "xxx",
+      "nickname": "xxx",
+      "remark": "",
+      "avatar": "https://wx.qlogo.cn/mmhead/ver_1/8raqoBicHiarBt7YmEPFnicOjthC75vQS9lm2HeXXBibjKYlziamOW5O90sAq9K4iaIhdX33T4kqyFpCI9StyLrHQ2az7s6IBRPHbaiaFUJd9quJJhcWh286ibmNRiaTZC4YrTt1m/132",
+      "type": "friend",
+      "online": true,
+      "starred": false
+    },
+    {
+      "wxid": "gh_8a8cce549a85",
+      "name": "顺丰速运",
+      "nickname": "顺丰速运",
+      "remark": "",
+      "avatar": "https://wx.qlogo.cn/mmhead/ver_1/ttcgFnbsfMbia8YWFaOz9CQSiaZLClkOsD0UvynSlg2O0aBQtGOUylCIEQZGJs7MAPUEbqYmGQflc15qcSX4DgEjczKyzdrr2Pt8WWcFrzJDs/132",
+      "type": "official",
+      "online": true,
+      "starred": false
+    },
+    {
+      "wxid": "xianan96928",
+      "name": "禅落",
+      "nickname": "禅落",
+      "remark": "",
+      "avatar": "https://wx.qlogo.cn/mmhead/ver_1/xAPZBtEdGQblpoyFDBYeRmOzSeuK247AHx8nQzP6ib9BVBQaQF0ibgibOiaBzNlCJYQLTJ1zYUtEfqAWhSMQVN3YLFJTmud8QRekl5GibA1iaSzdc/132",
+      "type": "friend",
+      "online": true,
+      "starred": false
+    },
+    {
+      "wxid": "wxid_set0fj4vp36j22",
+      "name": "袁思思 金蝶",
+      "nickname": "袁思思 金蝶～",
+      "remark": "袁思思 金蝶",
+      "avatar": "https://wx.qlogo.cn/mmhead/ver_1/W1zSFvVCT1DVrZYlDKsMxrNaDviaHciaKlg6vtjeWWxww3daUGSkSyLEjIbWngpfyB7saj8LZFmmMbjaiciav6o5UoibB0Lzg2jYT77ZDXfclgUY/132",
+      "type": "friend",
+      "online": true,
+      "starred": false
+    },
+    {
+      "wxid": "wxid_nbd1uae4l5a722",
+      "name": "一笑释然",
+      "nickname": "一笑释然",
+      "remark": "",
+      "avatar": "https://wx.qlogo.cn/mmhead/ver_1/kz9rC2c5WibzhKENVuyHib1e2N6qMFoBc8IEArnT9I8eicAtBCWLSvgQbxTKhaGo4o3vHw161wXc8j9wWOSmBibibDGzGWIuKKlictb7t5Dl2FXwQ/132",
+      "type": "friend",
+      "online": true,
+      "starred": false
+    },
+    {
+      "wxid": "gh_de6e8bae77ae",
+      "name": "小白测评",
+      "nickname": "小白测评",
+      "remark": "",
+      "avatar": "https://wx.qlogo.cn/mmhead/ver_1/Ih5HZNBiaPDgNWc3qb6KrHMTJMoYH0UVsPzmnxxYGc4Ac7aRFGWka88sXWia4E1YSSpWO79qOagxBTHXQiccl4G2gqhT4724Rib5ABrGkx0u3ps/132",
+      "type": "official",
+      "online": true,
+      "starred": false
+    },
+    {
+      "wxid": "gh_8fc7e0dd960a",
+      "name": "老夏的金库",
+      "nickname": "老夏的金库",
+      "remark": "",
+      "avatar": "https://wx.qlogo.cn/mmhead/ver_1/gLOr7Uj7cliaLZnNYMhXBqEXLiaaSdUS8Ru775ZR1TRS9Uib4W3aJKF3icYFR47iaEGZ5gKtm3bpE9syic7mwiciajakLylcicbapLR09Q45NJ1iaqIpjq2sBx2qg5ayibPp5HlzibM8/132",
+      "type": "official",
+      "online": true,
+      "starred": false
+    },
+    {
+      "wxid": "wxid_rge23yvqjevj22",
+      "name": "阿孟",
+      "nickname": "阿孟",
+      "remark": "",
+      "avatar": "https://wx.qlogo.cn/mmhead/ver_1/k5zeD3GHZE4CMcicNHgY15y9QgpoPicx0GrdgQAAGTEqDWJKDcTW1Uo4Qm8xwPwibia0g44B2m6nlg3kKp9bsVPlv98e3qBmFR3xWgxm7EqIQicypRc51lp9ss7CV7kYo6eeO/132",
+      "type": "friend",
+      "online": true,
+      "starred": false
+    },
+    {
+      "wxid": "47373655745@chatroom",
+      "name": "47373655745@chatroom",
+      "nickname": "",
+      "remark": "",
+      "avatar": "/static/img/favicon.ico",
+      "type": "group",
+      "online": true,
+      "starred": false
+    },
+    {
+      "wxid": "17872241400@chatroom",
+      "name": "17872241400@chatroom",
+      "nickname": "",
+      "remark": "",
+      "avatar": "/static/img/favicon.ico",
+      "type": "group",
+      "online": true,
+      "starred": false
+    },
+    {
+      "wxid": "21658786807@chatroom",
+      "name": "❤️ ❤️ ❤️ 快乐一家人",
+      "nickname": "❤️ ❤️ ❤️ 快乐一家人",
+      "remark": "",
+      "avatar": "https://wx.qlogo.cn/mmcrhead/2ia5FgQ8cgQSHOVrbAFa7vCiaOFZDQlq9sWM0XkiatVQ14LPYMeoRKbanTMGhxLFWqxEibx5DwvkwAA/0",
+      "type": "group",
+      "online": true,
+      "starred": false
+    },
+    {
+      "wxid": "48369192388@chatroom",
+      "name": "测试群",
+      "nickname": "测试群",
+      "remark": "",
+      "avatar": "https://wx.qlogo.cn/mmcrhead/wybQ0I1kj2pUgICx5rzv5FM0XoiaicrTsA08WZMRjIcvocicyZhHRbMQVLRlia6jZL5lDuVazTJ49Pg/0",
+      "type": "group",
+      "online": true,
+      "starred": false
+    },
+    {
+      "wxid": "47325400669@chatroom",
+      "name": "XXXBot测试群",
+      "nickname": "XXXBot测试群",
+      "remark": "",
+      "avatar": "https://wx.qlogo.cn/mmcrhead/rZUxicRkq6os1UfOiaUFKicoW8pdQR3lmHrWksqA48uGFmo4qEviakQAuibSkzGYdzPKCxTrAI9qia8T8/0",
+      "type": "group",
+      "online": true,
+      "starred": false
+    }
+  ],
+  "timestamp": 1744246106
+}
