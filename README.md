@@ -84,7 +84,9 @@ XXXBot 是一个基于微信的智能机器人系统，通过整合多种 API �
 
 6. **启动必要的服务**
 
-   **Windows 用户需要先启动 Redis 和 PAD 服务**（注意启动顺序！）：
+   **需要先启动 Redis 和 PAD 服务**（注意启动顺序！）：
+
+   ### 🏠 Windows 用户
 
    - ❗ **第一步**：启动 Redis 服务 🔋
 
@@ -98,6 +100,58 @@ XXXBot 是一个基于微信的智能机器人系统，通过整合多种 API �
 
    - ⚠️ 请确保这两个服务窗口始终保持打开状态，不要关闭它们！
 
+     **然后启动主服务**：
+
+   ```bash
+   python app.py
+   ```
+
+   ### 💻 Linux 用户
+
+   - ❗ **第一步**：启动 Redis 服务 🔋
+
+     ```bash
+     # 进入Redis目录
+     cd 849/redis
+
+     # 使用Linux配置文件启动Redis
+     redis-server redis.linux.conf
+     ```
+
+     - 如果 Redis 未安装，需要先安装：
+
+     ```bash
+     # Ubuntu/Debian
+     sudo apt-get update
+     sudo apt-get install redis-server
+
+     # CentOS/RHEL
+     sudo yum install redis
+     ```
+
+   - ❗ **第二步**：启动 PAD 服务 📱
+
+     ```bash
+     # 进入PAD目录
+     cd 849/pad
+
+     # 给执行文件添加执行权限
+     chmod +x linuxService
+
+     # 运行服务
+     ./linuxService
+     ```
+
+   - ⚠️ 请确保这两个服务进程保持运行状态，可以使用如下命令检查：
+
+     ```bash
+     # 检查Redis服务
+     ps aux | grep redis
+
+     # 检查PAD服务
+     ps aux | grep linuxService
+     ```
+
    **然后启动主服务**：
 
    ```bash
@@ -105,6 +159,8 @@ XXXBot 是一个基于微信的智能机器人系统，通过整合多种 API �
    ```
 
 #### 🔺 方法二：Docker 安装 🐳
+
+> 💡 **注意**：Docker 环境会自动启动 Redis 和 PAD 服务，无需手动启动。这是通过 `entrypoint.sh` 脚本实现的。
 
 1. **克隆代码库**
 
