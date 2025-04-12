@@ -17,7 +17,7 @@
         color: white;
         margin-bottom: 0.5rem;
     }
-    
+
     .status-dot {
         display: inline-block;
         width: 10px;
@@ -25,25 +25,25 @@
         border-radius: 50%;
         margin-right: 5px;
     }
-    
+
     .status-dot.online {
         background-color: var(--success-color);
         box-shadow: 0 0 0 4px rgba(46, 204, 113, 0.2);
         animation: pulse 2s infinite;
     }
-    
+
     .status-dot.offline {
         background-color: var(--danger-color);
     }
-    
+
     .status-dot.waiting {
         background-color: var(--warning-color);
     }
-    
+
     .status-dot.ready {
         background-color: var(--info-color);
     }
-    
+
     @keyframes pulse {
         0% {
             box-shadow: 0 0 0 0 rgba(46, 204, 113, 0.4);
@@ -59,16 +59,16 @@
     .progress-ring {
         transform: rotate(-90deg);
     }
-    
+
     .progress-ring__circle {
         transition: stroke-dashoffset 0.5s ease;
     }
-    
+
     .stat-card {
         position: relative;
         overflow: hidden;
     }
-    
+
     .stat-card::before {
         content: '';
         position: absolute;
@@ -81,24 +81,24 @@
         transform: scale(0.5);
         transition: transform 0.5s ease, opacity 0.5s ease;
     }
-    
+
     .stat-card:hover::before {
         opacity: 1;
         transform: scale(1);
     }
-    
+
     .metric-grid {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
         gap: 1.5rem;
     }
-    
+
     .btn-qrcode {
         position: relative;
         overflow: hidden;
         transition: all 0.3s ease;
     }
-    
+
     .btn-qrcode::after {
         content: '';
         position: absolute;
@@ -109,7 +109,7 @@
         background: linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.2) 50%, rgba(255,255,255,0) 100%);
         transition: left 0.5s ease;
     }
-    
+
     .btn-qrcode:hover::after {
         left: 100%;
     }
@@ -134,10 +134,15 @@
                             <div class="dashboard-stat-icon" style="background: linear-gradient(135deg, #3498DB, #2874A6);">
                                 <i class="bi bi-robot"></i>
                             </div>
-                            <div class="d-flex align-items-center mb-1">
-                                <h6 class="stat-title mb-0">机器人状态</h6>
-                                <button id="refresh-status" class="refresh-button ms-2" title="刷新状态">
-                                    <i class="bi bi-arrow-clockwise"></i>
+                            <div class="d-flex align-items-center mb-1 justify-content-between">
+                                <div class="d-flex align-items-center">
+                                    <h6 class="stat-title mb-0">机器人状态</h6>
+                                    <button id="refresh-status" class="refresh-button ms-2" title="刷新状态">
+                                        <i class="bi bi-arrow-clockwise"></i>
+                                    </button>
+                                </div>
+                                <button id="switch-account" class="btn btn-sm btn-outline-primary" title="切换微信账号" style="display: none;">
+                                    <i class="bi bi-arrow-repeat me-1"></i>切换账号
                                 </button>
                             </div>
                             <div class="stat-value d-flex align-items-center">
@@ -153,13 +158,14 @@
                                     <i class="bi bi-person-badge me-1"></i>
                                     <span>昵称：<span id="bot-nickname">-</span></span>
                                 </div>
-                                <div class="small text-muted d-flex align-items-center">
+                                <div class="small text-muted d-flex align-items-center mb-2">
                                     <i class="bi bi-chat-dots me-1"></i>
                                     <span>微信号：<span id="bot-wxid">-</span></span>
                                 </div>
+
                             </div>
                         </div>
-                        
+
                         <!-- 运行时间 -->
                         <div class="stat-card" data-aos="fade-up" data-aos-delay="200">
                             <div class="dashboard-stat-icon" style="background: linear-gradient(135deg, #E74C3C, #C0392B);">
@@ -169,7 +175,7 @@
                             <div class="stat-value" id="uptime-value">{{ uptime|default('获取中...') }}</div>
                             <div class="stat-description" id="start-time">启动于 {{ start_time|default('--') }}</div>
                         </div>
-                        
+
                         <!-- 内存占用 -->
                         <div class="stat-card" data-aos="fade-up" data-aos-delay="300">
                             <div class="dashboard-stat-icon" style="background: linear-gradient(135deg, #9B59B6, #8E44AD);">
@@ -183,7 +189,7 @@
                                 </div>
                             </div>
                         </div>
-                        
+
                         <!-- CPU 使用率 -->
                         <div class="stat-card" data-aos="fade-up" data-aos-delay="400">
                             <div class="dashboard-stat-icon" style="background: linear-gradient(135deg, #F39C12, #D35400);">
@@ -202,9 +208,9 @@
             </div>
         </div>
     </div>
-    
+
     <!-- 二维码登录区域 - 仅在等待登录时显示 -->
-    <!-- 
+    <!--
     <div id="qrcode-section" class="row" style="display: none;">
         <div class="col-lg-6 mx-auto">
             <div class="card dashboard-card" data-aos="fade-up">
@@ -227,7 +233,7 @@
                         <div class="qrcode-countdown" id="qrcode-countdown"></div>
                         <div class="qrcode-tip">请使用微信扫描二维码登录</div>
                     </div>
-                    
+
                     <div class="qrcode-form">
                         <div class="mb-3">
                             <label for="qrcode-url" class="form-label">手动输入二维码URL</label>
@@ -245,7 +251,7 @@
         </div>
     </div>
     -->
-    
+
     <!-- 快速操作 -->
     <div class="row mt-4">
         <div class="col-12">
@@ -304,7 +310,7 @@
         const refreshQrcodeBtn = document.getElementById('refresh-qrcode');
         const qrcodeUrlInput = document.getElementById('qrcode-url');
         const loadQrcodeBtn = document.getElementById('load-qrcode');
-        
+
         // 设置进度条宽度
         function setProgressBars() {
             document.querySelectorAll('.progress-bar[data-percent]').forEach(bar => {
@@ -314,20 +320,20 @@
                 }
             });
         }
-        
+
         // 初始化进度条
         setProgressBars();
-        
+
         // 更新机器人状态显示
         function updateStatusDisplay(status) {
             console.log("更新状态显示:", status);
             statusText.textContent = status;
             statusDisplay.dataset.status = status;
-            
+
             // 清除所有状态类
             statusDot.classList.remove('online', 'offline', 'waiting', 'ready');
             statusDisplay.classList.remove('online', 'offline', 'waiting', 'ready');
-            
+
             // 设置对应状态
             switch(status) {
                 case 'online':
@@ -336,8 +342,68 @@
                     statusDisplay.classList.add('online');
                     statusDescription.textContent = status === 'ready' ? '机器人已准备就绪' : '机器人已登录并正常运行';
                     // qrcodeSection.style.display = 'none'; // 注释掉，不再显示二维码区域
-                    // 显示机器人信息
+                    // 显示机器人信息和切换账号按钮
                     document.getElementById('bot-info').style.display = 'block';
+                    const switchBtn = document.getElementById('switch-account');
+                    switchBtn.style.display = 'block';
+
+                    // 确保切换账号按钮有事件监听器
+                    if (!switchBtn.hasAttribute('data-event-attached')) {
+                        console.log('为切换账号按钮添加点击事件');
+                        switchBtn.addEventListener('click', function() {
+                            console.log('切换账号按钮被点击');
+                            // 显示确认对话框
+                            if (confirm('确定要切换微信账号吗？\n\n这将删除当前账号的登录信息，并需要重新扫码登录。')) {
+                                console.log('用户确认切换账号，发送请求');
+                                // 显示加载状态
+                                switchBtn.disabled = true;
+                                switchBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>切换中...';
+
+                                // 发送请求删除 robot_stat.json 文件
+                                // 使用当前主机名和端口构建正确的URL
+                                const apiUrl = window.location.origin + '/api/switch_account';
+                                console.log('发送切换账号请求到:', apiUrl);
+
+                                fetch(apiUrl, {
+                                    method: 'POST',
+                                    headers: {
+                                        'Content-Type': 'application/json'
+                                    },
+                                    credentials: 'include'  // 确保发送认证Cookie
+                                })
+                                .then(response => {
+                                    console.log('收到切换账号响应:', response);
+                                    if (!response.ok) {
+                                        throw new Error('API响应状态码: ' + response.status);
+                                    }
+                                    return response.json();
+                                })
+                                .then(data => {
+                                    console.log('切换账号响应数据:', data);
+                                    if (data.success) {
+                                        // 成功切换账号
+                                        showToast('成功', '已切换账号，正在重新加载...', 'success');
+                                        // 延时后刷新页面
+                                        setTimeout(() => {
+                                            window.location.reload();
+                                        }, 2000);
+                                    } else {
+                                        // 切换账号失败
+                                        switchBtn.disabled = false;
+                                        switchBtn.innerHTML = '<i class="bi bi-arrow-repeat me-1"></i>切换账号';
+                                        showToast('错误', data.error || '切换账号失败', 'danger');
+                                    }
+                                })
+                                .catch(error => {
+                                    console.error('切换账号失败:', error);
+                                    switchBtn.disabled = false;
+                                    switchBtn.innerHTML = '<i class="bi bi-arrow-repeat me-1"></i>切换账号';
+                                    showToast('错误', '切换账号请求失败: ' + error.message, 'danger');
+                                });
+                            }
+                        });
+                        switchBtn.setAttribute('data-event-attached', 'true');
+                    }
                     break;
                 case 'offline':
                     statusDot.classList.add('offline');
@@ -345,6 +411,7 @@
                     statusDescription.textContent = '机器人目前离线，请检查连接';
                     // qrcodeSection.style.display = 'none'; // 注释掉，不再显示二维码区域
                     document.getElementById('bot-info').style.display = 'none';
+                    document.getElementById('switch-account').style.display = 'none';
                     break;
                 case 'waiting_login':
                     statusDot.classList.add('waiting');
@@ -353,7 +420,8 @@
                     // qrcodeSection.style.display = 'block'; // 不再显示二维码区域
                     // loadQRCode(); // 不再加载二维码
                     document.getElementById('bot-info').style.display = 'none';
-                    
+                    document.getElementById('switch-account').style.display = 'none';
+
                     break;
                 default:
                     statusDot.classList.add('offline');
@@ -361,15 +429,16 @@
                     statusDescription.textContent = '未知状态: ' + status;
                     // qrcodeSection.style.display = 'none'; // 注释掉，不再显示二维码区域
                     document.getElementById('bot-info').style.display = 'none';
+                    document.getElementById('switch-account').style.display = 'none';
             }
-            
+
             // 动画效果
             statusDisplay.classList.add('animate__animated', 'animate__pulse');
             setTimeout(() => {
                 statusDisplay.classList.remove('animate__animated', 'animate__pulse');
             }, 1000);
         }
-        
+
         // 获取机器人状态
         function getBotStatus() {
             // 修改为直接使用bot/status端点，因为api/status返回404
@@ -377,10 +446,10 @@
                 .then(response => response.json())
                 .then(data => {
                     console.log("获取到状态数据:", data);
-                    
+
                     // 提取状态数据，处理两种可能的数据结构
                     const statusData = data.data || data;
-                    
+
                     // 检查状态是否为undefined
                     if (!statusData || statusData.status === undefined) {
                         console.error("API返回的状态为undefined");
@@ -388,10 +457,10 @@
                         useHardcodedInfo();
                         return;
                     }
-                    
+
                     // 更新状态
                     updateStatusDisplay(statusData.status);
-                    
+
                     // 如果有机器人信息就显示
                     if (statusData.nickname) {
                         document.getElementById('bot-nickname').textContent = statusData.nickname;
@@ -401,7 +470,7 @@
                         document.getElementById('bot-wxid').textContent = statusData.wxid || statusData.alias || '-';
                         document.getElementById('bot-info').style.display = 'block';
                     }
-                    
+
                     document.getElementById('last-updated').textContent = '最后更新: ' + new Date().toLocaleTimeString();
                 })
                 .catch(error => {
@@ -410,23 +479,23 @@
                     useHardcodedInfo();
                 });
         }
-        
+
         // 使用硬编码信息作为备用
         function useHardcodedInfo() {
             console.log("使用固定信息备用方案");
-            
+
             // 由于用户确认机器人已登录，设置状态为online而不是waiting_login
             updateStatusDisplay("online");
-            
+
             // 设置用户信息
             document.getElementById('bot-nickname').textContent = "小球子";
             document.getElementById('bot-wxid').textContent = "wxid_l5im9jaxhr4412";
             document.getElementById('bot-info').style.display = 'block';
-            
+
             // 更新最后更新时间
             document.getElementById('last-updated').textContent = '最后更新: ' + new Date().toLocaleTimeString();
         }
-        
+
         // 加载QR码
         function loadQRCode() {
             fetch('/api/login/qrcode')
@@ -436,13 +505,13 @@
                         // 创建QR码图像
                         qrcodeDisplay.innerHTML = `<img src="${data.qrcode_url}" class="img-fluid" alt="微信登录二维码">`;
                         qrcodeStatus.textContent = '请使用微信扫描';
-                        
+
                         // 设置倒计时
                         let countdown = 300; // 默认5分钟
                         if (data.countdown) {
                             countdown = data.countdown;
                         }
-                        
+
                         startCountdown(countdown);
                     } else {
                         qrcodeDisplay.innerHTML = `<div class="alert alert-warning">无法获取二维码</div>`;
@@ -455,12 +524,12 @@
                     qrcodeStatus.textContent = '请尝试刷新或手动输入';
                 });
         }
-        
+
         // 倒计时
         let countdownTimer;
         function startCountdown(seconds) {
             clearInterval(countdownTimer);
-            
+
             function updateCountdown() {
                 if (seconds <= 0) {
                     clearInterval(countdownTimer);
@@ -468,19 +537,19 @@
                     qrcodeCountdown.classList.add('text-danger');
                     return;
                 }
-                
+
                 const minutes = Math.floor(seconds / 60);
                 const remainingSeconds = seconds % 60;
                 qrcodeCountdown.textContent = `有效期: ${minutes}:${remainingSeconds < 10 ? '0' : ''}${remainingSeconds}`;
                 qrcodeCountdown.classList.remove('text-danger');
-                
+
                 seconds--;
             }
-            
+
             updateCountdown();
             countdownTimer = setInterval(updateCountdown, 1000);
         }
-        
+
         // 手动加载QR码
         function manualLoadQRCode() {
             const url = qrcodeUrlInput.value.trim();
@@ -488,29 +557,29 @@
                 showToast('错误', '请输入有效的二维码URL', 'danger');
                 return;
             }
-            
+
             qrcodeDisplay.innerHTML = `<img src="${url}" class="img-fluid" alt="微信登录二维码">`;
             qrcodeStatus.textContent = '请使用微信扫描';
             startCountdown(300); // 设置5分钟倒计时
-            
+
             showToast('成功', '二维码已加载', 'success');
         }
-        
+
         // 初始化页面
         getBotStatus();
-        
+
         // 立即手动获取一次最新状态
         // 添加延迟确保DOM已完全加载
         setTimeout(function() {
             refreshStatusBtn.click();
         }, 1000);
-        
+
         // 定时刷新状态和系统监控
         setInterval(getBotStatus, 30000);
-        
+
         // 立即更新进度条
         setProgressBars();
-        
+
         // 获取系统状态
         function getSystemStatus() {
             fetch('/api/system/status')
@@ -520,7 +589,7 @@
                     if (data.success && data.data) {
                         // 更新CPU和内存使用率
                         const systemData = data.data;
-                        
+
                         // 更新CPU使用率
                         if (systemData.cpu_percent !== undefined) {
                             const cpuPercent = systemData.cpu_percent;
@@ -529,14 +598,14 @@
                             cpuBar.setAttribute('data-percent', cpuPercent);
                             cpuBar.style.width = cpuPercent + '%';
                         }
-                        
+
                         // 更新内存使用率
                         if (systemData.memory_percent !== undefined) {
                             const memoryPercent = systemData.memory_percent.toFixed(2);
                             const memoryBar = document.querySelector('.progress-bar.bg-primary');
                             memoryBar.setAttribute('data-percent', memoryPercent);
                             memoryBar.style.width = memoryPercent + '%';
-                            
+
                             // 如果有memory_total和memory_used则显示更详细的内存信息
                             if (systemData.memory_used && systemData.memory_total) {
                                 const memoryUsed = (systemData.memory_used / (1024 * 1024 * 1024)).toFixed(2);
@@ -546,7 +615,7 @@
                                 document.getElementById('memory-value').textContent = memoryPercent + '%';
                             }
                         }
-                        
+
                         // 如果有时间信息则更新
                         if (systemData.uptime) {
                             document.getElementById('uptime-value').textContent = systemData.uptime;
@@ -564,11 +633,11 @@
                     document.getElementById('uptime-value').textContent = '获取失败';
                 });
         }
-        
+
         // 立即获取系统状态并定时更新
         getSystemStatus();
         setInterval(getSystemStatus, 30000);
-        
+
         // 按钮事件处理
         refreshStatusBtn.addEventListener('click', function() {
             getBotStatus();
@@ -577,7 +646,7 @@
                 refreshStatusBtn.classList.remove('animate__animated', 'animate__rotateIn');
             }, 1000);
         });
-        
+
         refreshQrcodeBtn.addEventListener('click', function() {
             loadQRCode();
             refreshQrcodeBtn.classList.add('animate__animated', 'animate__rotateIn');
@@ -585,9 +654,11 @@
                 refreshQrcodeBtn.classList.remove('animate__animated', 'animate__rotateIn');
             }, 1000);
         });
-        
+
         loadQrcodeBtn.addEventListener('click', manualLoadQRCode);
-        
+
+        // 切换账号按钮事件已移动到updateStatusDisplay函数中
+
         // 初始化时显示toast功能
         window.showToast = function(title, message, type = 'info') {
             console.log(`Toast: ${title} - ${message} (${type})`);
@@ -598,7 +669,7 @@
                 toastEl.setAttribute('role', 'alert');
                 toastEl.setAttribute('aria-live', 'assertive');
                 toastEl.setAttribute('aria-atomic', 'true');
-                
+
                 toastEl.innerHTML = `
                     <div class="d-flex">
                         <div class="toast-body">
@@ -607,11 +678,11 @@
                         <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
                     </div>
                 `;
-                
+
                 document.body.appendChild(toastEl);
                 const toast = new bootstrap.Toast(toastEl);
                 toast.show();
-                
+
                 // 自动移除
                 toastEl.addEventListener('hidden.bs.toast', function () {
                     document.body.removeChild(toastEl);
@@ -620,4 +691,4 @@
         };
     });
 </script>
-{% endblock %} 
+{% endblock %}

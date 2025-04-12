@@ -96,6 +96,36 @@
         }
     </style>
 
+    <!-- 自定义组件样式 -->
+    <style>
+        .version-info {
+            font-size: 1rem;
+            display: flex;
+            align-items: center;
+        }
+
+        /* 版本号标签样式 */
+        #version-info .badge {
+            font-size: 0.9rem;
+            padding: 0.35rem 0.6rem;
+        }
+
+        #check-update-btn {
+            padding: 0.35rem 0.6rem;
+            font-size: 0.9rem;
+            border-radius: 0.25rem;
+        }
+
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+
+        .animate__rotateIn {
+            animation: spin 1s linear infinite;
+        }
+    </style>
+
     {% block extra_css %}{% endblock %}
 </head>
 <body class="animate__animated animate__fadeIn">
@@ -176,10 +206,21 @@
                     <h1 class="h4 mb-0 text-gray-800">{% block page_title %}控制面板{% endblock %}</h1>
                 </div>
 
-                <div class="ms-auto">
-                    <button id="restart-container-btn" class="btn btn-sm btn-danger" style="z-index:9999; position:relative; padding: 8px 16px; font-weight: bold; cursor: pointer !important; pointer-events: auto !important;" onclick="restartContainer()">
-                        <i class="bi bi-arrow-clockwise me-1"></i>重启容器
-                    </button>
+                <div class="ms-auto d-flex align-items-center">
+                    <div class="version-info me-3" id="version-info">
+                        <span class="badge bg-primary shadow-sm">
+                            <i class="bi bi-code-slash me-1"></i>
+                            <span id="current-version">{{ version }}</span>
+                        </span>
+                        <button id="check-update-btn" class="btn btn-outline-primary ms-2 shadow-sm" onclick="manualCheckUpdate()" data-bs-toggle="tooltip" title="检查是否有新版本">
+                            <i class="bi bi-arrow-repeat"></i>
+                        </button>
+                        {% if update_available %}
+                        <a href="{{ update_url }}" target="_blank" class="badge bg-success ms-2 shadow-sm" data-bs-toggle="tooltip" title="{{ update_description }}">
+                            <i class="bi bi-arrow-up-circle-fill me-1"></i>新版本: {{ latest_version }}
+                        </a>
+                        {% endif %}
+                    </div>
                 </div>
             </div>
         </nav>
@@ -386,6 +427,200 @@
 
     <!-- 通用模态窗口管理 -->
     <script src="/admin/static/js/custom.js?v={{ version }}"></script>
+
+    <!-- 版本检查脚本 -->
+    <script>
+        // 手动检查更新函数
+        function manualCheckUpdate() {
+            // 显示加载状态
+            const checkBtn = document.getElementById('check-update-btn');
+            const originalHTML = checkBtn.innerHTML;
+            checkBtn.innerHTML = '<i class="bi bi-arrow-repeat animate__animated animate__rotateIn"></i>';
+            checkBtn.disabled = true;
+
+            // 隐藏可能存在的tooltip
+            const tooltip = bootstrap.Tooltip.getInstance(checkBtn);
+            if (tooltip) {
+                tooltip.hide();
+            }
+
+            // 调用检查函数
+            checkForUpdates(true)
+                .then(hasUpdate => {
+                    // 恢复按钮状态
+                    setTimeout(() => {
+                        checkBtn.innerHTML = originalHTML;
+                        checkBtn.disabled = false;
+
+                        // 如果没有更新，显示提示
+                        if (!hasUpdate) {
+                            alert('当前已是最新版本！');
+                        }
+
+                        // 清除所有tooltip
+                        document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => {
+                            const tooltipInstance = bootstrap.Tooltip.getInstance(el);
+                            if (tooltipInstance) {
+                                tooltipInstance.hide();
+                            }
+                        });
+                    }, 1000);
+                })
+                .catch(error => {
+                    console.error('检查更新失败:', error);
+                    // 恢复按钮状态
+                    setTimeout(() => {
+                        checkBtn.innerHTML = originalHTML;
+                        checkBtn.disabled = false;
+                        alert('检查更新失败，请稍后再试。');
+
+                        // 清除所有tooltip
+                        document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => {
+                            const tooltipInstance = bootstrap.Tooltip.getInstance(el);
+                            if (tooltipInstance) {
+                                tooltipInstance.hide();
+                            }
+                        });
+                    }, 1000);
+                });
+        }
+
+        // 版本检查函数
+        function checkForUpdates(isManualCheck = false) {
+            // 获取当前版本
+            const currentVersion = document.getElementById('current-version').innerText;
+
+            // 返回一个Promise
+            return new Promise((resolve, reject) => {
+                // 发送版本检查请求
+                fetch('/api/version/check', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        current_version: currentVersion
+                    })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    // 获取当前版本
+                    const currentVersion = document.getElementById('current-version').innerText;
+
+                    // 检查是否有更新且版本号不同
+                    if (data.success && data.update_available && data.latest_version !== currentVersion) {
+                        // 更新版本信息显示
+                        const versionInfo = document.getElementById('version-info');
+
+                        // 创建更新标记
+                        const updateBadge = document.createElement('a');
+                        updateBadge.href = data.update_url || '#';
+                        updateBadge.target = '_blank';
+                        updateBadge.className = 'badge bg-success ms-2 shadow-sm';
+                        updateBadge.setAttribute('data-bs-toggle', 'tooltip');
+                        updateBadge.setAttribute('title', data.update_description || '有新版本可用');
+                        updateBadge.innerHTML = `<i class="bi bi-arrow-up-circle-fill me-1"></i>新版本: ${data.latest_version}`;
+
+                        // 检查是否已经有更新标记
+                        const existingBadge = versionInfo.querySelector('a.badge.bg-success');
+                        if (existingBadge) {
+                            existingBadge.remove();
+                        }
+
+                        // 添加更新标记
+                        versionInfo.appendChild(updateBadge);
+
+                        // 初始化工具提示
+                        const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+                        tooltipTriggerList.map(function (tooltipTriggerEl) {
+                            return new bootstrap.Tooltip(tooltipTriggerEl);
+                        });
+
+                        // 保存更新信息到本地存储
+                        localStorage.setItem('updateInfo', JSON.stringify({
+                            latest_version: data.latest_version,
+                            update_url: data.update_url,
+                            update_description: data.update_description
+                        }));
+
+                        // 返回有更新
+                        resolve(true);
+                    } else {
+                        // 如果版本相同，清除可能存在的更新标记
+                        if (data.success && data.latest_version === currentVersion) {
+                            const versionInfo = document.getElementById('version-info');
+                            const existingBadge = versionInfo.querySelector('a.badge.bg-success');
+                            if (existingBadge) {
+                                existingBadge.remove();
+                                // 清除本地存储的更新信息
+                                localStorage.removeItem('updateInfo');
+                            }
+                        }
+                        // 返回没有更新
+                        resolve(false);
+                    }
+            })
+            .catch(error => {
+                console.error('版本检查失败:', error);
+                reject(error);
+            });
+            });
+        }
+
+        // 页面加载完成后执行
+        document.addEventListener('DOMContentLoaded', function() {
+            // 初始化工具提示
+            const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+            tooltipTriggerList.map(function (tooltipTriggerEl) {
+                return new bootstrap.Tooltip(tooltipTriggerEl);
+            });
+
+            // 检查是否有存储的更新信息
+            const storedUpdateInfo = localStorage.getItem('updateInfo');
+            if (storedUpdateInfo) {
+                try {
+                    const updateInfo = JSON.parse(storedUpdateInfo);
+                    const versionInfo = document.getElementById('version-info');
+                    const currentVersion = document.getElementById('current-version').innerText;
+
+                    // 只有当存储的版本与当前版本不同时才显示更新标记
+                    if (updateInfo.latest_version !== currentVersion) {
+                        // 创建更新标记
+                        const updateBadge = document.createElement('a');
+                        updateBadge.href = updateInfo.update_url || '#';
+                        updateBadge.target = '_blank';
+                        updateBadge.className = 'badge bg-success ms-2 shadow-sm';
+                        updateBadge.setAttribute('data-bs-toggle', 'tooltip');
+                        updateBadge.setAttribute('title', updateInfo.update_description || '有新版本可用');
+                        updateBadge.innerHTML = `<i class="bi bi-arrow-up-circle-fill me-1"></i>新版本: ${updateInfo.latest_version}`;
+
+                        // 检查是否已经有更新标记
+                        const existingBadge = versionInfo.querySelector('a.badge.bg-success');
+                        if (!existingBadge) {
+                            versionInfo.appendChild(updateBadge);
+                        }
+                    } else {
+                        // 如果版本相同，清除存储的更新信息
+                        localStorage.removeItem('updateInfo');
+                        // 清除可能存在的更新标记
+                        const existingBadge = versionInfo.querySelector('a.badge.bg-success');
+                        if (existingBadge) {
+                            existingBadge.remove();
+                        }
+                    }
+                } catch (e) {
+                    console.error('解析存储的更新信息失败:', e);
+                    localStorage.removeItem('updateInfo');
+                }
+            }
+
+            // 每小时检查一次更新
+            checkForUpdates().catch(error => console.error('自动检查更新失败:', error));
+            setInterval(() => {
+                checkForUpdates().catch(error => console.error('自动检查更新失败:', error));
+            }, 3600000); // 3600000毫秒 = 1小时
+        });
+    </script>
 
     <!-- 页面特定的JS -->
     {% block extra_js %}{% endblock %}
