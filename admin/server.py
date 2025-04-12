@@ -356,7 +356,9 @@ def get_system_status():
     """获取系统运行状态信息"""
     try:
         import psutil
+        import os
         from datetime import datetime, timedelta
+        from pathlib import Path
 
         # 获取CPU使用率
         cpu_percent = psutil.cpu_percent(interval=0.5)
@@ -378,9 +380,50 @@ def get_system_status():
         bytes_sent = net_io_counters.bytes_sent
         bytes_recv = net_io_counters.bytes_recv
 
-        # 获取系统启动时间和运行时间
-        boot_time = datetime.fromtimestamp(psutil.boot_time())
-        uptime = datetime.now() - boot_time
+        # 获取机器人启动时间和运行时间
+        # 首先尝试从bot_status.json获取时间戳
+        status_file = Path(current_dir) / "bot_status.json"
+        login_time = None
+
+        if status_file.exists():
+            try:
+                with open(status_file, "r", encoding="utf-8") as f:
+                    status_data = json.load(f)
+                    # 如果状态是online，使用状态文件中的时间戳
+                    if status_data.get("status") == "online" and "timestamp" in status_data:
+                        login_time = datetime.fromtimestamp(status_data["timestamp"])
+                        logger.debug(f"从状态文件获取到登录时间: {login_time}")
+            except Exception as e:
+                logger.error(f"读取状态文件失败: {e}")
+
+        # 如果无法从状态文件获取，则尝试从robot_stat.json获取
+        if not login_time:
+            robot_stat_file = Path(current_dir).parent / "resource" / "robot_stat.json"
+            if robot_stat_file.exists():
+                try:
+                    with open(robot_stat_file, "r", encoding="utf-8") as f:
+                        robot_stat = json.load(f)
+                        # 获取文件的修改时间作为登录时间
+                        file_mtime = os.path.getmtime(robot_stat_file)
+                        login_time = datetime.fromtimestamp(file_mtime)
+                        logger.debug(f"从robot_stat.json文件修改时间获取到登录时间: {login_time}")
+                except Exception as e:
+                    logger.error(f"读取robot_stat.json失败: {e}")
+
+        # 如果仍然无法获取，则使用进程启动时间
+        if not login_time:
+            try:
+                process = psutil.Process(os.getpid())
+                login_time = datetime.fromtimestamp(process.create_time())
+                logger.debug(f"使用进程创建时间作为登录时间: {login_time}")
+            except Exception as e:
+                logger.error(f"获取进程创建时间失败: {e}")
+                # 最后的备选方案：使用系统启动时间
+                login_time = datetime.fromtimestamp(psutil.boot_time())
+                logger.debug(f"使用系统启动时间作为登录时间: {login_time}")
+
+        # 计算运行时间
+        uptime = datetime.now() - login_time
         uptime_str = str(timedelta(seconds=int(uptime.total_seconds())))
 
         return {
@@ -394,7 +437,7 @@ def get_system_status():
             'bytes_sent': bytes_sent,
             'bytes_recv': bytes_recv,
             'uptime': uptime_str,
-            'start_time': boot_time.strftime("%Y-%m-%d %H:%M:%S")
+            'start_time': login_time.strftime("%Y-%m-%d %H:%M:%S")
         }
     except Exception as e:
         logger.error(f"获取系统状态信息失败: {str(e)}")
