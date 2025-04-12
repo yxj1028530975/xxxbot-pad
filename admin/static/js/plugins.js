@@ -339,6 +339,10 @@ function renderPluginList(pluginsList) {
                             <button class="btn btn-sm btn-outline-primary rounded-pill btn-config" data-plugin-id="${plugin.id}" ${!plugin.enabled ? 'disabled' : ''}>
                                 <i class="bi bi-gear-fill me-1"></i>配置
                             </button>
+                            ${plugin.id !== 'ManagePlugin' ? `
+                            <button class="btn btn-sm btn-outline-danger rounded-pill btn-delete" data-plugin-id="${plugin.id}">
+                                <i class="bi bi-trash me-1"></i>删除
+                            </button>` : ''}
                         </div>
                     </div>
                 </div>
@@ -503,6 +507,13 @@ function renderPluginList(pluginsList) {
         button.addEventListener('click', function() {
             const pluginId = this.getAttribute('data-plugin-id');
             openReadmeModal(pluginId);
+        });
+    });
+
+    document.querySelectorAll('.btn-delete').forEach(button => {
+        button.addEventListener('click', function() {
+            const pluginId = this.getAttribute('data-plugin-id');
+            confirmDeletePlugin(pluginId);
         });
     });
 }
@@ -789,6 +800,123 @@ function showToast(message, type = 'info') {
     toastEl.addEventListener('hidden.bs.toast', function() {
         this.remove();
     });
+}
+
+// 确认删除插件
+function confirmDeletePlugin(pluginId) {
+    const plugin = plugins.find(p => p.id === pluginId);
+    if (!plugin) {
+        showToast('插件不存在', 'danger');
+        return;
+    }
+
+    // 检查是否是核心插件
+    if (pluginId === 'ManagePlugin') {
+        showToast('无法删除核心插件', 'danger');
+        return;
+    }
+
+    // 创建确认对话框
+    if (!document.getElementById('delete-plugin-modal')) {
+        const modalHtml = `
+            <div class="modal fade" id="delete-plugin-modal" tabindex="-1" aria-labelledby="delete-plugin-modal-label" aria-hidden="true">
+                <div class="modal-dialog">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title" id="delete-plugin-modal-label">确认删除插件</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="alert alert-warning">
+                                <i class="bi bi-exclamation-triangle-fill me-2"></i>
+                                <span>警告：删除插件将会移除插件的所有文件，包括配置文件。此操作不可恢复！</span>
+                            </div>
+                            <p>您确定要删除插件 <strong id="delete-plugin-name"></strong> 吗？</p>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                            <button type="button" class="btn btn-danger" id="confirm-delete-btn">
+                                <i class="bi bi-trash me-1"></i>确认删除
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+        document.body.insertAdjacentHTML('beforeend', modalHtml);
+    }
+
+    // 设置插件名称
+    document.getElementById('delete-plugin-name').textContent = plugin.name;
+
+    // 移除旧的事件监听器
+    const confirmBtn = document.getElementById('confirm-delete-btn');
+    const newConfirmBtn = confirmBtn.cloneNode(true);
+    confirmBtn.parentNode.replaceChild(newConfirmBtn, confirmBtn);
+
+    // 添加新的事件监听器
+    newConfirmBtn.addEventListener('click', function() {
+        deletePlugin(pluginId);
+    });
+
+    // 显示模态框
+    const modal = new bootstrap.Modal(document.getElementById('delete-plugin-modal'));
+    modal.show();
+}
+
+// 删除插件
+async function deletePlugin(pluginId) {
+    try {
+        // 显示加载状态
+        const confirmBtn = document.getElementById('confirm-delete-btn');
+        const originalHtml = confirmBtn.innerHTML;
+        confirmBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>正在删除...';
+        confirmBtn.disabled = true;
+
+        // 发送删除请求
+        // 尝试使用备用路由
+        const response = await fetch('/api/plugin/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ plugin_id: pluginId })
+        });
+
+        const result = await response.json();
+
+        // 隐藏模态框
+        const modal = bootstrap.Modal.getInstance(document.getElementById('delete-plugin-modal'));
+        modal.hide();
+
+        if (result.success) {
+            // 从插件列表中移除
+            plugins = plugins.filter(p => p.id !== pluginId);
+
+            // 更新插件计数
+            document.getElementById('plugin-count').textContent = plugins.length;
+
+            // 刷新UI
+            filterPlugins(currentFilter);
+
+            // 显示成功提示
+            showToast(result.message || '插件已成功删除', 'success');
+        } else {
+            // 恢复按钮状态
+            confirmBtn.innerHTML = originalHtml;
+            confirmBtn.disabled = false;
+
+            // 显示错误提示
+            showToast(result.error || '删除插件失败', 'danger');
+        }
+    } catch (error) {
+        console.error('删除插件失败:', error);
+
+        // 隐藏模态框
+        const modal = bootstrap.Modal.getInstance(document.getElementById('delete-plugin-modal'));
+        modal.hide();
+
+        // 显示错误提示
+        showToast(`删除插件失败: ${error.message}`, 'danger');
+    }
 }
 
 // 搜索插件

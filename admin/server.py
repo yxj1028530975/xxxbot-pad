@@ -201,6 +201,48 @@ async def broadcast_message(message: str):
             logger.error(f"广播消息失败: {str(e)}")
             await disconnect_websocket(connection)
 
+# 版本信息
+def get_version_info():
+    """获取版本信息"""
+    try:
+        # 获取版本信息文件路径
+        version_file = os.path.join(os.path.dirname(current_dir), "version.json")
+
+        # 如果文件存在，读取版本信息
+        if os.path.exists(version_file):
+            with open(version_file, "r", encoding="utf-8") as f:
+                try:
+                    version_info = json.load(f)
+                    return version_info
+                except json.JSONDecodeError:
+                    logger.error(f"版本信息文件格式错误: {version_file}")
+
+        # 如果文件不存在或读取失败，创建默认版本信息
+        version_info = {
+            "version": "1.0.0",
+            "update_available": False,
+            "latest_version": "",
+            "update_url": "",
+            "update_description": "",
+            "last_check": datetime.now().isoformat()
+        }
+
+        # 保存默认版本信息
+        with open(version_file, "w", encoding="utf-8") as f:
+            json.dump(version_info, f, ensure_ascii=False, indent=2)
+
+        return version_info
+    except Exception as e:
+        logger.error(f"获取版本信息失败: {str(e)}")
+        return {
+            "version": "1.0.0",
+            "update_available": False,
+            "latest_version": "",
+            "update_url": "",
+            "update_description": "",
+            "last_check": datetime.now().isoformat()
+        }
+
 # 系统信息
 def get_system_info():
     """获取系统信息"""
@@ -648,6 +690,41 @@ def get_bot_status():
         logger.error(f"读取bot状态文件失败: {e}")
         return {"status": "error", "error": str(e), "timestamp": time.time()}
 
+# 读取版本信息
+def get_version_info():
+    """从version.json文件读取版本信息"""
+    try:
+        version_file = os.path.join(os.path.dirname(current_dir), "version.json")
+        if os.path.exists(version_file):
+            with open(version_file, "r", encoding="utf-8") as f:
+                version_info = json.load(f)
+                return version_info
+        else:
+            logger.warning(f"版本文件不存在: {version_file}")
+            # 创建默认版本信息
+            version_info = {
+                "version": "v1.0.0",
+                "last_check": datetime.now().isoformat(),
+                "update_available": False,
+                "latest_version": "",
+                "update_url": "",
+                "update_description": ""
+            }
+            # 保存默认版本信息
+            with open(version_file, "w", encoding="utf-8") as f:
+                json.dump(version_info, f, ensure_ascii=False, indent=2)
+            return version_info
+    except Exception as e:
+        logger.error(f"读取版本信息失败: {e}")
+        return {
+            "version": "v1.0.0",
+            "last_check": datetime.now().isoformat(),
+            "update_available": False,
+            "latest_version": "",
+            "update_url": "",
+            "update_description": ""
+        }
+
 # 初始化FastAPI应用
 def init_app():
     global templates
@@ -715,13 +792,26 @@ def setup_routes():
             template_path = "reminders.html"
             logger.debug(f"尝试加载模板: {template_path}")
 
+            # 获取版本信息
+            version_info = get_version_info()
+            version = version_info.get("version", "1.0.0")
+            update_available = version_info.get("update_available", False)
+            latest_version = version_info.get("latest_version", "")
+            update_url = version_info.get("update_url", "")
+            update_description = version_info.get("update_description", "")
+
             return templates.TemplateResponse(
                 template_path,
                 {
                     "request": request,
                     "username": username,
                     "title": "定时提醒",
-                    "current_page": "reminders"
+                    "current_page": "reminders",
+                    "version": version,
+                    "update_available": update_available,
+                    "latest_version": latest_version,
+                    "update_url": update_url,
+                    "update_description": update_description
                 }
             )
         except Exception as e:
@@ -759,6 +849,7 @@ def setup_routes():
 
         # 使用绝对导入
         from reminder_api import register_reminder_routes
+        logger.info("成功导入reminder_api.register_reminder_routes")
 
         # 先定义check_auth函数
         async def check_auth(request: Request):
@@ -813,6 +904,19 @@ def setup_routes():
         # 然后注册路由，传入check_auth函数和获取bot实例的函数
         register_friend_circle_routes(app, check_auth, lambda: bot_instance)
         logger.info("朋友圈API路由注册成功")
+    except Exception as e:
+        logger.error(f"注册朋友圈API路由失败: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+
+    # 导入并注册切换账号相关路由
+    try:
+        # 使用绝对导入
+        from switch_account_api import register_switch_account_routes
+
+        # 然后注册路由，传入check_auth函数和更新机器人状态的函数
+        register_switch_account_routes(app, check_auth, update_bot_status)
+        logger.info("切换账号API路由注册成功")
 
         # 直接添加朋友圈页面路由
         @app.get("/friend_circle", response_class=HTMLResponse)
@@ -833,11 +937,24 @@ def setup_routes():
                     bot_wxid = bot_instance.wxid
                     logger.debug(f"当前机器人 wxid: {bot_wxid}")
 
+                # 获取版本信息
+                version_info = get_version_info()
+                version = version_info.get("version", "1.0.0")
+                update_available = version_info.get("update_available", False)
+                latest_version = version_info.get("latest_version", "")
+                update_url = version_info.get("update_url", "")
+                update_description = version_info.get("update_description", "")
+
                 # 认证成功，显示朋友圈页面
                 return templates.TemplateResponse("friend_circle.html", {
                     "request": request,
                     "active_page": "friend_circle",
-                    "bot_wxid": bot_wxid
+                    "bot_wxid": bot_wxid,
+                    "version": version,
+                    "update_available": update_available,
+                    "latest_version": latest_version,
+                    "update_url": update_url,
+                    "update_description": update_description
                 })
             except Exception as e:
                 logger.error(f"访问朋友圈页面失败: {str(e)}")
@@ -1110,6 +1227,14 @@ except:
         system_info = get_system_info()
         system_status = get_system_status()
 
+        # 获取版本信息
+        version_info = get_version_info()
+        version = version_info.get("version", "1.0.0")
+        update_available = version_info.get("update_available", False)
+        latest_version = version_info.get("latest_version", "")
+        update_url = version_info.get("update_url", "")
+        update_description = version_info.get("update_description", "")
+
         return templates.TemplateResponse(
             "index.html",
             {
@@ -1122,7 +1247,12 @@ except:
                 "memory_usage": f"{system_status['memory_percent']}%",
                 "memory_percent": system_status["memory_percent"],
                 "cpu_percent": system_status["cpu_percent"],
-                "current_time": datetime.now().strftime("%H:%M:%S")
+                "current_time": datetime.now().strftime("%H:%M:%S"),
+                "version": version_info["version"],
+                "update_available": version_info.get("update_available", False),
+                "latest_version": version_info.get("latest_version", ""),
+                "update_url": version_info.get("update_url", ""),
+                "update_description": version_info.get("update_description", "")
             }
         )
 
@@ -1138,6 +1268,14 @@ except:
         system_info = get_system_info()
         system_status = get_system_status()
 
+        # 获取版本信息
+        version_info = get_version_info()
+        version = version_info.get("version", "1.0.0")
+        update_available = version_info.get("update_available", False)
+        latest_version = version_info.get("latest_version", "")
+        update_url = version_info.get("update_url", "")
+        update_description = version_info.get("update_description", "")
+
         return templates.TemplateResponse(
             "index.html",
             {
@@ -1146,6 +1284,11 @@ except:
                 "active_page": "index",
                 "system_info": system_info,
                 "uptime": system_status["uptime"],
+                "version": version,
+                "update_available": update_available,
+                "latest_version": latest_version,
+                "update_url": update_url,
+                "update_description": update_description,
                 "start_time": system_status["start_time"],
                 "memory_usage": f"{system_status['memory_percent']}%",
                 "memory_percent": system_status["memory_percent"],
@@ -1163,12 +1306,25 @@ except:
             # 未认证，重定向到登录页面
             return RedirectResponse(url="/login")
 
+        # 获取版本信息
+        version_info = get_version_info()
+        version = version_info.get("version", "1.0.0")
+        update_available = version_info.get("update_available", False)
+        latest_version = version_info.get("latest_version", "")
+        update_url = version_info.get("update_url", "")
+        update_description = version_info.get("update_description", "")
+
         return templates.TemplateResponse(
             "plugins.html",
             {
                 "request": request,
                 "bot": bot_instance,
-                "active_page": "plugins"
+                "active_page": "plugins",
+                "version": version,
+                "update_available": update_available,
+                "latest_version": latest_version,
+                "update_url": update_url,
+                "update_description": update_description
             }
         )
 
@@ -1184,9 +1340,22 @@ except:
 
             logger.debug(f"用户 {username} 访问联系人页面")
             # 认证成功，显示联系人页面
+            # 获取版本信息
+            version_info = get_version_info()
+            version = version_info.get("version", "1.0.0")
+            update_available = version_info.get("update_available", False)
+            latest_version = version_info.get("latest_version", "")
+            update_url = version_info.get("update_url", "")
+            update_description = version_info.get("update_description", "")
+
             return templates.TemplateResponse("contacts.html", {
                 "request": request,
-                "current_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                "current_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "version": version,
+                "update_available": update_available,
+                "latest_version": latest_version,
+                "update_url": update_url,
+                "update_description": update_description
             })
         except Exception as e:
             logger.error(f"访问联系人页面失败: {str(e)}")
@@ -1208,13 +1377,26 @@ except:
             logger.error(f"获取系统状态失败: {str(e)}")
             system_status = {}
 
+        # 获取版本信息
+        version_info = get_version_info()
+        version = version_info.get("version", "1.0.0")
+        update_available = version_info.get("update_available", False)
+        latest_version = version_info.get("latest_version", "")
+        update_url = version_info.get("update_url", "")
+        update_description = version_info.get("update_description", "")
+
         # 返回系统页面
         return templates.TemplateResponse(
             "system.html",
             {
                 "request": request,
                 "active_page": "system",
-                "system_status": system_status
+                "system_status": system_status,
+                "version": version,
+                "update_available": update_available,
+                "latest_version": latest_version,
+                "update_url": update_url,
+                "update_description": update_description
             }
         )
 
@@ -1227,13 +1409,26 @@ except:
         except HTTPException:
             return RedirectResponse(url="/login?next=/terminal")
 
+        # 获取版本信息
+        version_info = get_version_info()
+        version = version_info.get("version", "1.0.0")
+        update_available = version_info.get("update_available", False)
+        latest_version = version_info.get("latest_version", "")
+        update_url = version_info.get("update_url", "")
+        update_description = version_info.get("update_description", "")
+
         # 返回终端页面
         logger.info(f"用户请求访问终端页面")
         return templates.TemplateResponse(
             "terminal.html",
             {
                 "request": request,
-                "active_page": "terminal"
+                "active_page": "terminal",
+                "version": version,
+                "update_available": update_available,
+                "latest_version": latest_version,
+                "update_url": update_url,
+                "update_description": update_description
             }
         )
 
@@ -1293,6 +1488,139 @@ except:
         # 不需要认证也可以查看状态
         #if not username:
         #    return JSONResponse(status_code=401, content={"success": False, "error": "未认证"})
+
+        try:
+            # 获取状态数据
+            status_data = get_bot_status()
+            logger.debug(f"API获取bot状态: {status_data}")
+
+            # 添加bot实例的一些信息（如果可用）
+            if bot_instance and hasattr(bot_instance, 'wxid') and status_data.get("status") in ["online", "ready"]:
+                try:
+                    # 避免覆盖状态文件中已有的信息
+                    if not status_data.get("nickname"):
+                        status_data["nickname"] = bot_instance.nickname
+                    if not status_data.get("wxid"):
+                        status_data["wxid"] = bot_instance.wxid
+                    if not status_data.get("alias"):
+                        status_data["alias"] = bot_instance.alias
+                except Exception as e:
+                    logger.error(f"获取bot实例信息失败: {e}")
+            else:
+                # 直接从状态文件中获取信息
+                logger.debug(f"bot_instance不可用或状态不是online/ready，使用状态文件中的信息")
+
+                # 确保状态数据中有个人信息字段(即使是空值)
+                for field in ["nickname", "wxid", "alias"]:
+                    if field not in status_data:
+                        status_data[field] = None
+
+            return {"success": True, "data": status_data}
+        except Exception as e:
+            logger.error(f"获取bot状态失败: {e}")
+            return {"success": False, "error": str(e)}
+
+    # API: 版本检查
+    @app.post("/api/version/check", response_class=JSONResponse)
+    async def api_version_check(request: Request):
+        try:
+            # 获取请求数据
+            data = await request.json()
+            current_version = data.get("current_version", "")
+
+            # 请求插件管理后台服务器检查更新
+            try:
+                # 打印请求URL以便调试
+                url = f"{PLUGIN_MARKET_API['BASE_URL']}/version/check"
+                logger.info(f"正在请求版本检查: {url}")
+
+                # 使用requests库而不是aiohttp
+                import requests
+                # 禁用SSL验证警告
+                import urllib3
+                urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+                response = requests.post(
+                    url,
+                    json={"current_version": current_version},
+                    timeout=5,
+                    verify=False  # 禁用SSL验证
+                )
+
+                # 检查响应状态
+                if response.status_code == 200:
+                    # 解析响应数据
+                    result = response.json()
+                    latest_version = result.get("latest_version", "")
+
+                    # 检查版本是否相同
+                    if latest_version == current_version:
+                        # 如果版本相同，则设置为没有更新可用
+                        result["update_available"] = False
+
+                        # 更新本地版本信息文件
+                        try:
+                            version_file = os.path.join(os.path.dirname(current_dir), "version.json")
+                            version_info = get_version_info()
+                            version_info["update_available"] = False
+                            version_info["last_check"] = datetime.now().isoformat()
+
+                            with open(version_file, "w", encoding="utf-8") as f:
+                                json.dump(version_info, f, ensure_ascii=False, indent=2)
+
+                            logger.info(f"更新版本信息文件成功: {version_file}")
+                        except Exception as e:
+                            logger.error(f"更新版本信息文件失败: {e}")
+                    # 如果有更新且版本不同
+                    elif result.get("update_available", False):
+                        try:
+                            version_file = os.path.join(os.path.dirname(current_dir), "version.json")
+                            version_info = get_version_info()
+                            version_info["update_available"] = True
+                            version_info["latest_version"] = latest_version
+                            version_info["update_url"] = result.get("update_url", "")
+                            version_info["update_description"] = result.get("update_description", "")
+                            version_info["last_check"] = datetime.now().isoformat()
+
+                            with open(version_file, "w", encoding="utf-8") as f:
+                                json.dump(version_info, f, ensure_ascii=False, indent=2)
+
+                            logger.info(f"更新版本信息文件成功: {version_file}")
+                        except Exception as e:
+                            logger.error(f"更新版本信息文件失败: {e}")
+
+                    return result
+                else:
+                    # 如果响应状态不是200，返回错误
+                    return {"success": False, "error": f"服务器返回错误状态码: {response.status_code}"}
+            except Exception as e:
+                logger.error(f"连接版本检查服务器失败: {e}")
+
+            # 如果无法连接到服务器，返回本地版本信息
+            version_info = get_version_info()
+
+            # 检查本地存储的版本是否与当前版本相同
+            if version_info.get("latest_version", "") == current_version:
+                version_info["update_available"] = False
+
+                # 更新本地版本信息文件
+                try:
+                    version_file = os.path.join(os.path.dirname(current_dir), "version.json")
+                    with open(version_file, "w", encoding="utf-8") as f:
+                        json.dump(version_info, f, ensure_ascii=False, indent=2)
+                except Exception as e:
+                    logger.error(f"更新版本信息文件失败: {e}")
+
+            return {
+                "success": True,
+                "update_available": version_info.get("update_available", False),
+                "latest_version": version_info.get("latest_version", ""),
+                "update_url": version_info.get("update_url", ""),
+                "update_description": version_info.get("update_description", "")
+            }
+        except Exception as e:
+            logger.error(f"版本检查失败: {str(e)}")
+            return {"success": False, "error": str(e)}
 
         try:
             # 获取状态数据
@@ -1401,9 +1729,119 @@ except:
             logger.error(f"禁用插件失败: {str(e)}")
             return {"success": False, "error": str(e)}
 
+    # API: 删除插件
+    @app.post("/api/plugins/{plugin_name}/delete", response_class=JSONResponse)
+    async def api_delete_plugin(plugin_name: str, request: Request):
+        # 检查认证状态
+        username = await check_auth(request)
+        if not username:
+            return JSONResponse(status_code=401, content={"success": False, "error": "未认证"})
+
+        try:
+            from utils.plugin_manager import plugin_manager
+            import shutil
+            import os
+
+            # 首先确保插件已经被卸载
+            if plugin_name in plugin_manager.plugins:
+                await plugin_manager.unload_plugin(plugin_name)
+
+            # 查找插件目录
+            plugin_dir = None
+            for dirname in os.listdir("plugins"):
+                if os.path.isdir(f"plugins/{dirname}") and os.path.exists(f"plugins/{dirname}/main.py"):
+                    try:
+                        # 检查目录中的main.py是否包含该插件类
+                        with open(f"plugins/{dirname}/main.py", "r", encoding="utf-8") as f:
+                            content = f.read()
+                            if f"class {plugin_name}(" in content:
+                                plugin_dir = f"plugins/{dirname}"
+                                break
+                    except Exception as e:
+                        logger.error(f"检查插件目录时出错: {str(e)}")
+
+            if not plugin_dir:
+                return {"success": False, "error": f"找不到插件 {plugin_name} 的目录"}
+
+            # 防止删除核心插件
+            if plugin_name == "ManagePlugin":
+                return {"success": False, "error": "不能删除核心插件 ManagePlugin"}
+
+            # 删除插件目录
+            shutil.rmtree(plugin_dir)
+
+            # 从插件信息中移除
+            if plugin_name in plugin_manager.plugin_info:
+                del plugin_manager.plugin_info[plugin_name]
+
+            return {"success": True, "message": f"插件 {plugin_name} 已成功删除"}
+        except Exception as e:
+            logger.error(f"删除插件失败: {str(e)}")
+            return {"success": False, "error": str(e)}
+
+    # API: 删除插件（备用路由）
+    @app.post("/api/plugin/delete", response_class=JSONResponse)
+    async def api_delete_plugin_alt(request: Request):
+        # 检查认证状态
+        username = await check_auth(request)
+        if not username:
+            return JSONResponse(status_code=401, content={"success": False, "error": "未认证"})
+
+        try:
+            # 获取请求数据
+            data = await request.json()
+            plugin_name = data.get('plugin_id')
+
+            if not plugin_name:
+                return {"success": False, "error": "缺少插件ID参数"}
+
+            from utils.plugin_manager import plugin_manager
+            import shutil
+            import os
+
+            # 首先确保插件已经被卸载
+            if plugin_name in plugin_manager.plugins:
+                await plugin_manager.unload_plugin(plugin_name)
+
+            # 查找插件目录
+            plugin_dir = None
+            for dirname in os.listdir("plugins"):
+                if os.path.isdir(f"plugins/{dirname}") and os.path.exists(f"plugins/{dirname}/main.py"):
+                    try:
+                        # 检查目录中的main.py是否包含该插件类
+                        with open(f"plugins/{dirname}/main.py", "r", encoding="utf-8") as f:
+                            content = f.read()
+                            if f"class {plugin_name}(" in content:
+                                plugin_dir = f"plugins/{dirname}"
+                                break
+                    except Exception as e:
+                        logger.error(f"检查插件目录时出错: {str(e)}")
+
+            if not plugin_dir:
+                return {"success": False, "error": f"找不到插件 {plugin_name} 的目录"}
+
+            # 防止删除核心插件
+            if plugin_name == "ManagePlugin":
+                return {"success": False, "error": "不能删除核心插件 ManagePlugin"}
+
+            # 删除插件目录
+            shutil.rmtree(plugin_dir)
+
+            # 从插件信息中移除
+            if plugin_name in plugin_manager.plugin_info:
+                del plugin_manager.plugin_info[plugin_name]
+
+            return {"success": True, "message": f"插件 {plugin_name} 已成功删除"}
+        except Exception as e:
+            logger.error(f"删除插件失败: {str(e)}")
+            return {"success": False, "error": str(e)}
+
+
+
     # 辅助函数: 查找插件配置路径
     def find_plugin_config_path(plugin_id: str):
         """查找插件配置文件路径，尝试多个可能的位置"""
+        # 首先尝试直接使用插件ID作为目录名
         possible_paths = [
             os.path.join("plugins", plugin_id, "config.toml"),  # 原始路径
             os.path.join("_data", "plugins", plugin_id, "config.toml"),  # _data目录下的路径
@@ -1411,6 +1849,23 @@ except:
             os.path.abspath(os.path.join("plugins", plugin_id, "config.toml")),  # 绝对路径
             os.path.join(os.path.dirname(os.path.dirname(current_dir)), "plugins", plugin_id, "config.toml")  # 项目根目录
         ]
+
+        # 如果没有找到，尝试遍历所有插件目录查找匹配的插件类
+        plugin_dirs = []
+        for dirname in os.listdir("plugins"):
+            if os.path.isdir(f"plugins/{dirname}") and os.path.exists(f"plugins/{dirname}/main.py"):
+                try:
+                    # 检查目录中的main.py是否包含该插件类
+                    with open(f"plugins/{dirname}/main.py", "r", encoding="utf-8") as f:
+                        content = f.read()
+                        if f"class {plugin_id}(" in content:
+                            plugin_dirs.append(dirname)
+                except Exception as e:
+                    logger.error(f"检查插件目录时出错: {str(e)}")
+
+        # 将找到的目录添加到可能路径中
+        for dirname in plugin_dirs:
+            possible_paths.append(os.path.join("plugins", dirname, "config.toml"))
 
         # 检查环境变量定义的数据目录
         data_dir_env = os.environ.get('XYBOT_DATA_DIR')
@@ -1432,7 +1887,13 @@ except:
                 logger.debug(f"找到插件配置文件: {path}")
                 return path
 
-        return None
+        # 如果没有找到存在的文件，返回默认路径
+        # 如果有找到插件目录，使用第一个找到的目录
+        if plugin_dirs:
+            return os.path.join("plugins", plugin_dirs[0], "config.toml")
+
+        # 否则使用插件ID作为目录名
+        return os.path.join("plugins", plugin_id, "config.toml")
 
     # API: 获取插件配置
     @app.get("/api/plugin_config", response_class=JSONResponse)
@@ -1477,6 +1938,18 @@ except:
                 # 如果配置文件不存在，返回默认位置
                 # 如插件尚未创建配置文件，返回它应该创建的位置
                 config_path = os.path.join("plugins", plugin_id, "config.toml")
+
+            # 检查文件是否存在，如果不存在则创建一个空的配置文件
+            if not os.path.exists(config_path):
+                try:
+                    # 确保目录存在
+                    os.makedirs(os.path.dirname(config_path), exist_ok=True)
+                    # 创建空的配置文件
+                    with open(config_path, 'w', encoding='utf-8') as f:
+                        f.write("# 插件配置文件\n\n[basic]\n# 是否启用插件\nenable = true\n")
+                    logger.info(f"创建了新的插件配置文件: {config_path}")
+                except Exception as e:
+                    logger.error(f"创建插件配置文件失败: {str(e)}")
 
             # 转换为相对路径，以便在文件管理器中打开
             relative_path = os.path.normpath(config_path)
@@ -1605,7 +2078,7 @@ except:
 
     # 插件市场API配置
     PLUGIN_MARKET_API = {
-        "BASE_URL": "https://xianan.xin:1562/api",  # 修改这一行
+        "BASE_URL": "http://xianan.xin:1562/api",  # 从https改为http
         "LIST": "/plugins?status=approved",
         "SUBMIT": "/plugins",
         "INSTALL": "/plugins/install/",
@@ -2542,10 +3015,27 @@ except:
 
             # 检查文件是否存在
             if not os.path.exists(full_path):
-                return JSONResponse(status_code=404, content={
-                    'success': False,
-                    'message': '文件不存在'
-                })
+                # 如果是插件配置文件，尝试创建一个空的配置文件
+                rel_path = str(full_path.relative_to(root_dir))
+                if 'plugins' in rel_path and rel_path.endswith('config.toml'):
+                    try:
+                        # 确保目录存在
+                        os.makedirs(os.path.dirname(full_path), exist_ok=True)
+                        # 创建空的配置文件
+                        with open(full_path, 'w', encoding='utf-8') as f:
+                            f.write("# 插件配置文件\n\n[basic]\n# 是否启用插件\nenable = true\n")
+                        logger.info(f"创建了新的插件配置文件: {full_path}")
+                    except Exception as e:
+                        logger.error(f"创建插件配置文件失败: {str(e)}")
+                        return JSONResponse(status_code=404, content={
+                            'success': False,
+                            'message': f'文件不存在且无法创建: {path}'
+                        })
+                else:
+                    return JSONResponse(status_code=404, content={
+                        'success': False,
+                        'message': '文件不存在'
+                    })
 
             # 检查是否是文件
             if not os.path.isfile(full_path):
@@ -3549,9 +4039,23 @@ except:
 
             logger.debug(f"用户 {username} 访问文件管理页面")
             # 认证成功，显示文件管理页面
+
+            # 获取版本信息
+            version_info = get_version_info()
+            version = version_info.get("version", "1.0.0")
+            update_available = version_info.get("update_available", False)
+            latest_version = version_info.get("latest_version", "")
+            update_url = version_info.get("update_url", "")
+            update_description = version_info.get("update_description", "")
+
             return templates.TemplateResponse("files.html", {
                 "request": request,
-                "current_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                "current_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "version": version,
+                "update_available": update_available,
+                "latest_version": latest_version,
+                "update_url": update_url,
+                "update_description": update_description
             })
         except Exception as e:
             logger.error(f"访问文件管理页面失败: {str(e)}")
@@ -4952,10 +5456,15 @@ def get_bot(wxid):
                 # 尝试发送到服务器
                 async with aiohttp.ClientSession() as session:
                     try:
+                        # 使用插件市场API配置
+                        url = f"{PLUGIN_MARKET_API['BASE_URL']}/plugins/submit"
+                        logger.info(f"正在同步插件到服务器: {url}")
+
                         async with session.post(
-                            'https://api.xybot.icu/plugin_market/submit',
+                            url,
                             json=plugin_data,
-                            timeout=10
+                            timeout=10,
+                            ssl=False  # 明确指定不使用SSL
                         ) as response:
                             if response.status == 200:
                                 # 删除本地文件
@@ -4973,7 +5482,11 @@ def get_bot(wxid):
         try:
             async with aiohttp.ClientSession() as session:
                 try:
-                    async with session.get('https://api.xybot.icu/plugin_market', timeout=10) as response:
+                    # 使用插件市场API配置
+                    url = f"{PLUGIN_MARKET_API['BASE_URL']}/plugins"
+                    logger.info(f"正在缓存插件市场数据: {url}")
+
+                    async with session.get(url, timeout=10, ssl=False) as response:
                         if response.status == 200:
                             data = await response.json()
 
@@ -5012,7 +5525,7 @@ def get_bot(wxid):
 
     # 插件市场API配置
     PLUGIN_MARKET_API = {
-        "BASE_URL": "https://xianan.xin:1562/api",  # 修改这一行
+        "BASE_URL": "http://xianan.xin:1562/api",  # 从https改为http
         "LIST": "/plugins?status=approved",
         "DETAIL": "/plugins/",
         "INSTALL": "/plugins/install/",
@@ -6044,3 +6557,6 @@ def get_bot(wxid):
         except Exception as e:
             logger.exception(f"删除提醒 {id} 失败: {str(e)}")
             return JSONResponse(content={"success": False, "error": f"删除提醒失败: {str(e)}"})
+
+    # API: 切换微信账号已移动到 switch_account_api.py 文件中
+
