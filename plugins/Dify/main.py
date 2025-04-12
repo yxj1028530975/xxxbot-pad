@@ -1349,27 +1349,66 @@ class Dify(PluginBase):
         """
         上传文件到Dify并返回文件ID
         """
+        logger.info(f"开始上传文件到Dify, 用户: {user}, 文件大小: {len(file_content)} 字节, MIME类型: {mime_type}")
+
+        if not file_content or len(file_content) == 0:
+            logger.error("文件内容为空，无法上传")
+            return None
+
         try:
             # 验证并处理图片数据
             try:
+                # 尝试打开图片数据
+                # 特别处理截断的图片文件
+                from PIL import ImageFile
+                ImageFile.LOAD_TRUNCATED_IMAGES = True  # 允许加载截断的图片
+
                 image = Image.open(io.BytesIO(file_content))
+                logger.debug(f"原始图片格式: {image.format}, 大小: {image.size}, 模式: {image.mode}")
+
                 # 转换为RGB模式(去除alpha通道)
                 if image.mode in ('RGBA', 'LA'):
+                    logger.debug(f"图片包含alpha通道，转换为RGB模式")
                     background = Image.new('RGB', image.size, (255, 255, 255))
                     background.paste(image, mask=image.split()[-1])
                     image = background
+
                 # 保存为JPEG
                 output = io.BytesIO()
                 image.save(output, format='JPEG', quality=95)
                 file_content = output.getvalue()
                 mime_type = 'image/jpeg'
-                logger.debug("图片格式转换成功")
+                logger.info(f"图片格式转换成功，新大小: {len(file_content)} 字节")
             except Exception as e:
-                logger.warning(f"图片格式转换失败: {e}")
-                return None
+                logger.error(f"图片格式转换失败: {e}")
+                logger.error(traceback.format_exc())
+                # 尝试使用原始数据上传
+                logger.warning("将使用原始图片数据上传")
+                # 确保我们有正确的MIME类型
+                try:
+                    import filetype
+                    kind = filetype.guess(file_content)
+                    if kind is not None:
+                        mime_type = kind.mime
+                        logger.debug(f"检测到文件类型: {mime_type}")
+                    else:
+                        # 如果无法检测，尝试使用默认的图片MIME类型
+                        mime_type = 'image/jpeg'  # 默认使用JPEG
+                        logger.warning(f"无法检测文件类型，使用默认类型: {mime_type}")
+                except Exception as mime_error:
+                    logger.error(f"检测文件类型失败: {mime_error}")
+                    mime_type = 'image/jpeg'  # 默认使用JPEG
+                logger.warning("将尝试使用原始数据上传")
 
             # 使用传入的model_config，如果没有则使用默认模型
             model = model_config or self.current_model
+            model_name = next((name for name, config in self.models.items() if config == model), '未知')
+            logger.debug(f"使用模型 '{model_name}' 上传文件")
+
+            # 检查API密钥
+            if not model.api_key:
+                logger.error(f"模型 '{model_name}' 的API密钥未配置，无法上传文件")
+                return None
 
             # 决定是使用API代理还是直接连接
             use_api_proxy = self.api_proxy is not None and has_api_proxy and False  # 文件上传暂不使用API代理
@@ -1382,24 +1421,40 @@ class Dify(PluginBase):
             # 使用直接连接上传文件
             headers = {"Authorization": f"Bearer {model.api_key}"}
             formdata = aiohttp.FormData()
+            filename = f"file_{int(time.time())}.{mime_type.split('/')[-1]}"
             formdata.add_field("file", file_content,
-                            filename=f"file.{mime_type.split('/')[-1]}",
+                            filename=filename,
                             content_type=mime_type)
             formdata.add_field("user", user)
 
             url = f"{model.base_url}/files/upload"
-            async with aiohttp.ClientSession(proxy=self.http_proxy) as session:
-                async with session.post(url, headers=headers, data=formdata) as resp:
-                    if resp.status in (200, 201):
-                        result = await resp.json()
-                        logger.debug(f"文件上传成功: {result}")
-                        return result.get("id")
-                    else:
-                        error_text = await resp.text()
-                        logger.error(f"文件上传失败: HTTP {resp.status} - {error_text}")
-                        return None
+            logger.debug(f"开始请求Dify文件上传API: {url}")
+
+            try:
+                async with aiohttp.ClientSession(proxy=self.http_proxy) as session:
+                    async with session.post(url, headers=headers, data=formdata) as resp:
+                        if resp.status in (200, 201):
+                            result = await resp.json()
+                            file_id = result.get("id")
+                            if file_id:
+                                logger.info(f"文件上传成功，文件ID: {file_id}")
+                                # 上传成功后删除缓存
+                                if user in self.image_cache:
+                                    del self.image_cache[user]
+                                    logger.debug(f"已清除用户 {user} 的图片缓存")
+                                return file_id
+                            else:
+                                logger.error(f"文件上传成功但未返回文件ID: {result}")
+                        else:
+                            error_text = await resp.text()
+                            logger.error(f"文件上传失败: HTTP {resp.status} - {error_text}")
+                            return None
+            except aiohttp.ClientError as e:
+                logger.error(f"HTTP请求失败: {e}")
+                return None
         except Exception as e:
             logger.error(f"上传文件时发生错误: {e}")
+            logger.error(traceback.format_exc())
             return None
 
     async def dify_handle_text(self, bot: WechatAPIClient, message: dict, text: str, model_config=None):
@@ -1624,30 +1679,139 @@ class Dify(PluginBase):
             return
 
         try:
-            # 解析XML获取图片信息
-            xml_content = message.get("Content")
-            if isinstance(xml_content, str):
-                try:
-                    # 从XML中提取base64图片数据
-                    image_base64 = xml_content.split(',')[-1]  # 获取base64部分
-                    # 转换base64为二进制
-                    try:
-                        image_content = base64.b64decode(image_base64)
-                        # 验证是否为有效的图片数据
-                        Image.open(io.BytesIO(image_content))
+            # 获取图片消息的关键信息
+            msg_id = message.get("MsgId")
+            from_wxid = message.get("FromWxid")
+            sender_wxid = message.get("SenderWxid")
 
-                        self.image_cache[message["FromWxid"]] = {
-                            "content": image_content,
-                            "timestamp": time.time()
-                        }
-                        logger.debug(f"已缓存用户 {message['FromWxid']} 的图片")
-                    except Exception as e:
-                        logger.error(f"图片数据无效: {e}")
+            logger.info(f"收到图片消息: MsgId={msg_id}, FromWxid={from_wxid}, SenderWxid={sender_wxid}")
+
+            # 直接从消息中获取图片内容
+            image_content = None
+            xml_content = message.get("Content")
+
+            # 如果是二进制数据，直接使用
+            if isinstance(xml_content, bytes):
+                logger.debug("图片内容是二进制数据，尝试直接处理")
+                try:
+                    # 验证是否为有效的图片数据
+                    Image.open(io.BytesIO(xml_content))
+                    image_content = xml_content
+                    logger.info(f"二进制图片数据验证成功，大小: {len(xml_content)} 字节")
                 except Exception as e:
-                    logger.error(f"处理base64数据失败: {e}")
-                    logger.debug(f"Base64数据: {image_base64[:100]}...")  # 只打印前100个字符
+                    logger.error(f"二进制图片数据无效: {e}")
+
+            # 如果是字符串，尝试解析XML或处理base64图片数据
+            elif isinstance(xml_content, str):
+                # 检查是否是base64编码的图片数据
+                if xml_content.startswith('/9j/') or xml_content.startswith('iVBOR'):
+                    logger.debug("检测到base64编码的图片数据，直接解码")
+                    try:
+                        import base64
+                        # 处理可能的填充字符
+                        xml_content = xml_content.strip()
+                        # 处理可能的换行符
+                        xml_content = xml_content.replace('\n', '').replace('\r', '')
+
+                        try:
+                            # 先尝试直接解码
+                            image_data = base64.b64decode(xml_content)
+                        except Exception as base64_error:
+                            logger.warning(f"直接解码失败: {base64_error}")
+                            # 尝试修复可能的base64编码问题
+                            try:
+                                # 添加可能缺失的填充
+                                padding_needed = len(xml_content) % 4
+                                if padding_needed:
+                                    xml_content += '=' * (4 - padding_needed)
+                                image_data = base64.b64decode(xml_content)
+                                logger.debug("添加填充后成功解码base64数据")
+                            except Exception as padding_error:
+                                logger.error(f"添加填充后仍然无法解码: {padding_error}")
+                                # 尝试使用更宽松的解码方式
+                                try:
+                                    image_data = base64.b64decode(xml_content + '==', validate=False)
+                                    logger.debug("使用宽松模式成功解码base64数据")
+                                except Exception as e:
+                                    logger.error(f"所有base64解码方法均失败: {e}")
+                                    return
+
+                        # 验证图片数据
+                        try:
+                            # 允许加载截断的图片
+                            from PIL import ImageFile
+                            ImageFile.LOAD_TRUNCATED_IMAGES = True
+
+                            Image.open(io.BytesIO(image_data))
+                            image_content = image_data
+                            logger.info(f"base64图片数据解码成功，大小: {len(image_data)} 字节")
+                        except Exception as img_error:
+                            logger.error(f"base64图片数据无效: {img_error}")
+                    except Exception as base64_error:
+                        logger.error(f"base64解码失败: {base64_error}")
+                        logger.debug(f"base64数据前100字符: {xml_content[:100]}")
+                else:
+                    # 尝试解析XML
+                    logger.debug("图片内容是字符串，尝试解析XML")
+                    try:
+                        # 尝试解析XML获取图片信息
+                        root = ET.fromstring(xml_content)
+                        img_element = root.find('img')
+
+                        if img_element is not None:
+                            # 提取图片元数据
+                            md5 = img_element.get('md5')
+                            aeskey = img_element.get('aeskey')
+                            length = img_element.get('length')
+                            cdnmidimgurl = img_element.get('cdnmidimgurl')
+                            cdnthumburl = img_element.get('cdnthumburl')
+
+                            logger.info(f"从XML解析到图片信息: md5={md5}, aeskey={aeskey}, length={length}")
+
+                            # 尝试使用PAD API下载图片
+                            try:
+                                # 从 XML 中提取图片大小
+                                img_length = int(length) if length and length.isdigit() else 0
+
+                                # 使用消息 ID 下载图片
+                                logger.debug(f"尝试使用消息 ID {msg_id} 下载图片，图片大小: {img_length}")
+                                image_data = await bot.get_msg_image(msg_id, from_wxid, img_length)
+
+                                if image_data and len(image_data) > 0:
+                                    # 验证图片数据
+                                    try:
+                                        Image.open(io.BytesIO(image_data))
+                                        image_content = image_data
+                                        logger.info(f"使用消息 ID下载图片成功，大小: {len(image_data)} 字节")
+                                    except Exception as img_error:
+                                        logger.error(f"下载的图片数据无效: {img_error}")
+                            except Exception as download_error:
+                                logger.error(f"使用消息 ID下载图片失败: {download_error}")
+                                logger.error(traceback.format_exc())
+                    except Exception as xml_error:
+                        logger.error(f"XML解析失败: {xml_error}")
+                        logger.debug(f"XML内容前100字符: {xml_content[:100]}")
             else:
-                logger.error("图片消息内容不是字符串格式")
+                logger.error(f"图片消息内容格式未知: {type(xml_content)}")
+
+            # 如果成功获取图片内容，则缓存
+            if image_content:
+                # 缓存图片到发送者和收件人的ID
+                self.image_cache[sender_wxid] = {
+                    "content": image_content,
+                    "timestamp": time.time()
+                }
+                logger.info(f"已缓存用户 {sender_wxid} 的图片")
+
+                # 如果是私聊，也缓存到聊天对象的ID
+                if from_wxid != sender_wxid:
+                    self.image_cache[from_wxid] = {
+                        "content": image_content,
+                        "timestamp": time.time()
+                    }
+                    logger.info(f"已缓存聊天对象 {from_wxid} 的图片")
+            else:
+                logger.warning(f"未能获取图片内容，无法缓存")
 
         except Exception as e:
             logger.error(f"处理图片消息失败: {e}")
@@ -1655,9 +1819,14 @@ class Dify(PluginBase):
 
     async def get_cached_image(self, user_wxid: str) -> Optional[bytes]:
         """获取用户最近的图片"""
+        logger.debug(f"尝试获取用户 {user_wxid} 的缓存图片")
         if user_wxid in self.image_cache:
             cache_data = self.image_cache[user_wxid]
-            if time.time() - cache_data["timestamp"] <= self.image_cache_timeout:
+            current_time = time.time()
+            cache_age = current_time - cache_data["timestamp"]
+            logger.debug(f"找到缓存图片，年龄: {cache_age:.2f}秒, 超时时间: {self.image_cache_timeout}秒")
+
+            if cache_age <= self.image_cache_timeout:
                 try:
                     # 确保我们有有效的二进制数据
                     image_content = cache_data["content"]
@@ -1668,14 +1837,17 @@ class Dify(PluginBase):
 
                     # 尝试验证图片数据
                     try:
-                        Image.open(io.BytesIO(image_content))
+                        img = Image.open(io.BytesIO(image_content))
+                        logger.debug(f"缓存图片验证成功，格式: {img.format}, 大小: {len(image_content)} 字节")
                     except Exception as e:
                         logger.error(f"缓存的图片数据无效: {e}")
                         del self.image_cache[user_wxid]
                         return None
 
-                    # 清除缓存
-                    del self.image_cache[user_wxid]
+                    # 不再删除缓存，而是在上传成功后删除
+                    # 更新时间戳，避免过早超时
+                    self.image_cache[user_wxid]["timestamp"] = current_time
+                    logger.info(f"成功获取用户 {user_wxid} 的缓存图片")
                     return image_content
                 except Exception as e:
                     logger.error(f"处理缓存图片失败: {e}")
@@ -1683,7 +1855,10 @@ class Dify(PluginBase):
                     return None
             else:
                 # 超时清除
+                logger.debug(f"缓存图片超时，已清除")
                 del self.image_cache[user_wxid]
+        else:
+            logger.debug(f"未找到用户 {user_wxid} 的缓存图片")
         return None
 
     async def download_and_send_file(self, bot: WechatAPIClient, message: dict, url: str):

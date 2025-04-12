@@ -7,11 +7,12 @@ from .login import LoginMixin
 from .message import MessageMixin
 from .protect import protector
 from .tool import ToolMixin
+from .tool_extension import ToolExtensionMixin
 from .user import UserMixin
 from .pyq import PyqMixin
 
 class WechatAPIClient(LoginMixin, MessageMixin, FriendMixin, ChatroomMixin, UserMixin,
-                      ToolMixin, HongBaoMixin,PyqMixin):
+                      ToolMixin, ToolExtensionMixin, HongBaoMixin, PyqMixin):
 
     # 这里都是需要结合多个功能的方法
 
