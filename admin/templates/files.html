@@ -13,19 +13,19 @@
         border-radius: 10px;
         box-shadow: 0 0 15px rgba(0,0,0,0.05);
     }
-    
+
     .card-header {
         background-color: #f8f9fa;
         border-bottom: 1px solid rgba(0,0,0,.1);
     }
-    
+
     .card {
         border-radius: 10px;
         overflow: hidden;
         box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
         margin-bottom: 20px;
     }
-    
+
     /* 集成样式 */
     .file-manager-container {
         border-radius: 10px;
@@ -33,6 +33,20 @@
         box-shadow: 0 0 15px rgba(0,0,0,0.05);
         background-color: #fff;
         height: calc(100vh - 180px);
+    }
+
+    /* 确保版本信息正确显示 */
+    #version-info {
+        display: flex !important;
+    }
+
+    #current-version {
+        display: inline-block !important;
+    }
+
+    /* 确保导航栏中的容器有正确的边距 */
+    .navbar .container-fluid {
+        padding: 0.5rem 1rem !important;
     }
 </style>
 {% endblock %}
@@ -70,12 +84,24 @@ function refreshFileManager() {
 
 // 页面加载完成后检查iframe加载状态
 document.addEventListener('DOMContentLoaded', function() {
+    // 确保版本信息元素可见
+    const versionInfo = document.getElementById('version-info');
+    if (versionInfo) {
+        versionInfo.style.display = 'flex';
+    }
+
+    // 确保当前版本号可见
+    const currentVersion = document.getElementById('current-version');
+    if (currentVersion) {
+        currentVersion.style.display = 'inline-block';
+    }
+
     const iframe = document.getElementById('fileManagerFrame');
     if (iframe) {
         iframe.onload = function() {
             console.log('文件管理器iframe加载完成');
         };
-        
+
         iframe.onerror = function() {
             console.error('文件管理器iframe加载失败');
             iframe.srcdoc = `
@@ -94,4 +120,4 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 });
 </script>
-{% endblock %} 
+{% endblock %}
