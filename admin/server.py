@@ -961,6 +961,11 @@ def setup_routes():
         register_switch_account_routes(app, check_auth, update_bot_status)
         logger.info("切换账号API路由注册成功")
 
+        # 导入并注册系统配置API路由
+        from system_config_api import router as system_config_router
+        app.include_router(system_config_router)
+        logger.info("系统配置API路由注册成功")
+
         # 直接添加朋友圈页面路由
         @app.get("/friend_circle", response_class=HTMLResponse)
         async def friend_circle_page(request: Request):
