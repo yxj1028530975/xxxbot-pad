@@ -208,18 +208,25 @@
 
                 <div class="ms-auto d-flex align-items-center">
                     <div class="version-info me-3" id="version-info">
-                        <span class="badge bg-primary shadow-sm">
-                            <i class="bi bi-code-slash me-1"></i>
-                            <span id="current-version">{{ version }}</span>
-                        </span>
-                        <button id="check-update-btn" class="btn btn-outline-primary ms-2 shadow-sm" onclick="manualCheckUpdate()" data-bs-toggle="tooltip" title="检查是否有新版本">
-                            <i class="bi bi-arrow-repeat"></i>
-                        </button>
-                        {% if update_available %}
-                        <a href="{{ update_url }}" target="_blank" class="badge bg-success ms-2 shadow-sm" data-bs-toggle="tooltip" title="{{ update_description }}">
-                            <i class="bi bi-arrow-up-circle-fill me-1"></i>新版本: {{ latest_version }}
-                        </a>
-                        {% endif %}
+                        <div class="d-flex align-items-center">
+                            <div class="d-flex align-items-center me-2" id="version-display">
+                                <span class="badge bg-primary shadow-sm">
+                                    <i class="bi bi-code-slash me-1"></i>
+                                    <span id="current-version" style="font-size: 0.9rem;">{{ version }}</span>
+                                </span>
+                                <button id="check-update-btn" class="btn btn-outline-primary btn-sm ms-1 shadow-sm" onclick="manualCheckUpdate()" data-bs-toggle="tooltip" title="检查是否有新版本">
+                                    <i class="bi bi-arrow-repeat"></i>
+                                </button>
+                            </div>
+                            <div id="update-container" class="align-items-center" style="display: none !important;">
+                                <span class="badge bg-success shadow-sm" data-bs-toggle="tooltip" title="{{ update_description }}" style="font-size: 0.9rem;" id="update-badge">
+                                    <i class="bi bi-arrow-up-circle-fill me-1"></i>新版本: <span id="latest-version">{{ latest_version }}</span>
+                                </span>
+                                <button id="update-now-btn" class="btn btn-success btn-sm ms-1 shadow-sm" onclick="updateNow()" data-bs-toggle="tooltip" title="立即更新到最新版本">
+                                    <i class="bi bi-cloud-download"></i> 立即更新
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -438,6 +445,14 @@
             checkBtn.innerHTML = '<i class="bi bi-arrow-repeat animate__animated animate__rotateIn"></i>';
             checkBtn.disabled = true;
 
+            // 默认隐藏更新容器
+            const updateContainer = document.getElementById('update-container');
+            if (updateContainer) {
+                updateContainer.removeAttribute('style');
+                updateContainer.setAttribute('style', 'display: none !important;');
+                updateContainer.classList.remove('d-flex');
+            }
+
             // 隐藏可能存在的tooltip
             const tooltip = bootstrap.Tooltip.getInstance(checkBtn);
             if (tooltip) {
@@ -452,10 +467,7 @@
                         checkBtn.innerHTML = originalHTML;
                         checkBtn.disabled = false;
 
-                        // 如果没有更新，显示提示
-                        if (!hasUpdate) {
-                            alert('当前已是最新版本！');
-                        }
+                        // 如果没有更新，不需要显示提示，因为已经在checkForUpdates函数中显示了
 
                         // 清除所有tooltip
                         document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => {
@@ -485,6 +497,55 @@
                 });
         }
 
+        // 立即更新函数
+        function updateNow() {
+            if (!confirm('确定要立即更新到最新版本吗？更新过程中可能会导致服务短暂中断。')) {
+                return;
+            }
+
+            // 显示加载状态
+            const updateBtn = document.getElementById('update-now-btn');
+            const originalHTML = updateBtn.innerHTML;
+            updateBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> 更新中...';
+            updateBtn.disabled = true;
+
+            // 发送更新请求
+            fetch('/api/version/update', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    current_version: document.getElementById('current-version').innerText
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // 显示成功消息
+                    showToast('更新已开始', data.message || '系统正在更新，页面将在几秒后自动刷新...', 'success');
+
+                    // 10秒后刷新页面
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 10000);
+                } else {
+                    // 显示错误
+                    showToast('更新失败', data.error || '更新请求失败', 'danger');
+                    // 恢复按钮状态
+                    updateBtn.disabled = false;
+                    updateBtn.innerHTML = originalHTML;
+                }
+            })
+            .catch(error => {
+                console.error('更新请求失败:', error);
+                showToast('更新失败', '请求发送失败: ' + error.message, 'danger');
+                // 恢复按钮状态
+                updateBtn.disabled = false;
+                updateBtn.innerHTML = originalHTML;
+            });
+        }
+
         // 版本检查函数
         function checkForUpdates(isManualCheck = false) {
             // 获取当前版本
@@ -510,25 +571,24 @@
                     // 检查是否有更新且版本号不同
                     if (data.success && data.update_available && data.latest_version !== currentVersion) {
                         // 更新版本信息显示
-                        const versionInfo = document.getElementById('version-info');
+                        const updateContainer = document.getElementById('update-container');
+                        const latestVersionSpan = document.getElementById('latest-version');
+                        const updateBadge = document.getElementById('update-badge');
 
-                        // 创建更新标记
-                        const updateBadge = document.createElement('a');
-                        updateBadge.href = data.update_url || '#';
-                        updateBadge.target = '_blank';
-                        updateBadge.className = 'badge bg-success ms-2 shadow-sm';
-                        updateBadge.setAttribute('data-bs-toggle', 'tooltip');
+                        // 更新版本号和描述
+                        latestVersionSpan.textContent = data.latest_version;
                         updateBadge.setAttribute('title', data.update_description || '有新版本可用');
-                        updateBadge.innerHTML = `<i class="bi bi-arrow-up-circle-fill me-1"></i>新版本: ${data.latest_version}`;
+                        updateBadge.setAttribute('href', data.update_url || '#');
 
-                        // 检查是否已经有更新标记
-                        const existingBadge = versionInfo.querySelector('a.badge.bg-success');
-                        if (existingBadge) {
-                            existingBadge.remove();
+                        // 显示更新容器
+                        updateContainer.removeAttribute('style');
+                        updateContainer.setAttribute('style', 'display: flex !important;');
+                        updateContainer.classList.add('d-flex');
+
+                        // 显示消息（如果是手动检查）
+                        if (isManualCheck) {
+                            showToast('发现新版本', `有新版本可用: ${data.latest_version}`, 'success');
                         }
-
-                        // 添加更新标记
-                        versionInfo.appendChild(updateBadge);
 
                         // 初始化工具提示
                         const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
@@ -546,15 +606,22 @@
                         // 返回有更新
                         resolve(true);
                     } else {
-                        // 如果版本相同，清除可能存在的更新标记
+                        // 如果版本相同，隐藏更新容器
                         if (data.success && data.latest_version === currentVersion) {
-                            const versionInfo = document.getElementById('version-info');
-                            const existingBadge = versionInfo.querySelector('a.badge.bg-success');
-                            if (existingBadge) {
-                                existingBadge.remove();
-                                // 清除本地存储的更新信息
-                                localStorage.removeItem('updateInfo');
+                            // 隐藏更新容器
+                            const updateContainer = document.getElementById('update-container');
+                            if (updateContainer) {
+                                updateContainer.removeAttribute('style');
+                                updateContainer.setAttribute('style', 'display: none !important;');
+                                updateContainer.classList.remove('d-flex');
                             }
+                            // 清除本地存储的更新信息
+                            localStorage.removeItem('updateInfo');
+                        }
+
+                        // 显示消息（如果是手动检查）
+                        if (isManualCheck) {
+                            showToast('检查完成', '当前已经是最新版本', 'info');
                         }
                         // 返回没有更新
                         resolve(false);
@@ -575,38 +642,39 @@
                 return new bootstrap.Tooltip(tooltipTriggerEl);
             });
 
+            // 隐藏更新容器（默认状态）
+            const updateContainer = document.getElementById('update-container');
+            if (updateContainer) {
+                updateContainer.removeAttribute('style');
+                updateContainer.setAttribute('style', 'display: none !important;');
+                updateContainer.classList.remove('d-flex');
+            }
+
             // 检查是否有存储的更新信息
             const storedUpdateInfo = localStorage.getItem('updateInfo');
             if (storedUpdateInfo) {
                 try {
                     const updateInfo = JSON.parse(storedUpdateInfo);
-                    const versionInfo = document.getElementById('version-info');
                     const currentVersion = document.getElementById('current-version').innerText;
 
                     // 只有当存储的版本与当前版本不同时才显示更新标记
                     if (updateInfo.latest_version !== currentVersion) {
-                        // 创建更新标记
-                        const updateBadge = document.createElement('a');
-                        updateBadge.href = updateInfo.update_url || '#';
-                        updateBadge.target = '_blank';
-                        updateBadge.className = 'badge bg-success ms-2 shadow-sm';
-                        updateBadge.setAttribute('data-bs-toggle', 'tooltip');
-                        updateBadge.setAttribute('title', updateInfo.update_description || '有新版本可用');
-                        updateBadge.innerHTML = `<i class="bi bi-arrow-up-circle-fill me-1"></i>新版本: ${updateInfo.latest_version}`;
+                        // 更新版本信息显示
+                        const latestVersionSpan = document.getElementById('latest-version');
+                        const updateBadge = document.getElementById('update-badge');
 
-                        // 检查是否已经有更新标记
-                        const existingBadge = versionInfo.querySelector('a.badge.bg-success');
-                        if (!existingBadge) {
-                            versionInfo.appendChild(updateBadge);
-                        }
+                        // 更新版本号和描述
+                        latestVersionSpan.textContent = updateInfo.latest_version;
+                        updateBadge.setAttribute('title', updateInfo.update_description || '有新版本可用');
+                        updateBadge.setAttribute('href', updateInfo.update_url || '#');
+
+                        // 显示更新容器
+                        updateContainer.removeAttribute('style');
+                        updateContainer.setAttribute('style', 'display: flex !important;');
+                        updateContainer.classList.add('d-flex');
                     } else {
                         // 如果版本相同，清除存储的更新信息
                         localStorage.removeItem('updateInfo');
-                        // 清除可能存在的更新标记
-                        const existingBadge = versionInfo.querySelector('a.badge.bg-success');
-                        if (existingBadge) {
-                            existingBadge.remove();
-                        }
                     }
                 } catch (e) {
                     console.error('解析存储的更新信息失败:', e);
