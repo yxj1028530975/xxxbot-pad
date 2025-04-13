@@ -6,6 +6,29 @@
 
 {% block extra_css %}
 <style>
+    /* 重启覆盖层样式 */
+    .restart-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.7);
+        z-index: 9999;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+    }
+
+    .restart-dialog {
+        background-color: white;
+        border-radius: 8px;
+        padding: 20px;
+        width: 80%;
+        max-width: 500px;
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+        text-align: center;
+    }
     .dashboard-stat-icon {
         height: 60px;
         width: 60px;
@@ -134,35 +157,41 @@
                             <div class="dashboard-stat-icon" style="background: linear-gradient(135deg, #3498DB, #2874A6);">
                                 <i class="bi bi-robot"></i>
                             </div>
-                            <div class="d-flex align-items-center mb-1 justify-content-between">
+                            <div class="d-flex align-items-center mb-2">
                                 <div class="d-flex align-items-center">
                                     <h6 class="stat-title mb-0">机器人状态</h6>
                                     <button id="refresh-status" class="refresh-button ms-2" title="刷新状态">
                                         <i class="bi bi-arrow-clockwise"></i>
                                     </button>
                                 </div>
-                                <button id="switch-account" class="btn btn-sm btn-outline-primary" title="切换微信账号" style="display: none;">
-                                    <i class="bi bi-arrow-repeat me-1"></i>切换账号
-                                </button>
                             </div>
-                            <div class="stat-value d-flex align-items-center">
+                            <div class="stat-value d-flex align-items-center mb-0 py-1">
                                 <span id="bot-status-display" class="status-badge" data-status="{{ bot_status }}">
                                     <span class="status-dot" id="status-dot"></span>
                                     <span id="status-text">{{ bot_status }}</span>
                                 </span>
                             </div>
-                            <div class="stat-description" id="status-description"></div>
+                            <div class="stat-description mb-1" id="status-description"></div>
                             <!-- 添加机器人信息显示 -->
-                            <div id="bot-info" class="mt-2" style="display: none;">
-                                <div class="small text-muted d-flex align-items-center mb-1">
+                            <div id="bot-info" class="mt-1" style="display: none;">
+                                <div class="small text-muted d-flex align-items-center mb-1 py-0">
                                     <i class="bi bi-person-badge me-1"></i>
                                     <span>昵称：<span id="bot-nickname">-</span></span>
                                 </div>
-                                <div class="small text-muted d-flex align-items-center mb-2">
+                                <div class="small text-muted d-flex align-items-center mb-1 py-0">
                                     <i class="bi bi-chat-dots me-1"></i>
                                     <span>微信号：<span id="bot-wxid">-</span></span>
                                 </div>
 
+                            </div>
+                            <!-- 在卡片底部添加按钮 -->
+                            <div class="d-flex gap-2 mt-3 justify-content-center">
+                                <button id="switch-account" class="btn btn-sm btn-outline-primary" title="切换微信账号" style="display: none;" onclick="handleSwitchAccount()">
+                                    <i class="bi bi-arrow-repeat me-1"></i>切换账号
+                                </button>
+                                <button id="edit-config" class="btn btn-sm btn-outline-primary" title="编辑系统配置" style="display: none;" onclick="handleEditConfig()">
+                                    <i class="bi bi-gear-fill me-1"></i>系统配置
+                                </button>
                             </div>
                         </div>
 
@@ -297,6 +326,224 @@
 
 {% block extra_js %}
 <script>
+    // 全局处理函数
+    function handleSwitchAccount() {
+        console.log('切换账号按钮被点击');
+        // 显示确认对话框
+        if (confirm('确定要切换微信账号吗？\n\n这将删除当前账号的登录信息，并需要重新扫码登录。')) {
+            console.log('用户确认切换账号，发送请求');
+            // 显示加载状态
+            const switchBtn = document.getElementById('switch-account');
+            switchBtn.disabled = true;
+            switchBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>切换中...';
+
+            // 发送请求删除 robot_stat.json 文件
+            // 使用当前主机名和端口构建正确的URL
+            const apiUrl = window.location.origin + '/api/switch_account';
+            console.log('发送切换账号请求到:', apiUrl);
+
+            fetch(apiUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                credentials: 'include'  // 确保发送认证Cookie
+            })
+            .then(response => {
+                console.log('收到切换账号响应:', response);
+                if (!response.ok) {
+                    throw new Error('API响应状态码: ' + response.status);
+                }
+                return response.json();
+            })
+            .then(data => {
+                console.log('切换账号响应数据:', data);
+                if (data.success) {
+                    // 成功切换账号
+                    showToast('成功', '已切换账号，系统正在重启...', 'success');
+
+                    // 显示加载中的提示
+                    const loadingDiv = document.createElement('div');
+                    loadingDiv.className = 'position-fixed top-0 start-0 w-100 h-100 d-flex justify-content-center align-items-center bg-dark bg-opacity-75';
+                    loadingDiv.style.zIndex = '9999';
+                    loadingDiv.innerHTML = `
+                        <div class="bg-white p-4 rounded shadow-lg text-center">
+                            <h4>系统重启中</h4>
+                            <p class="mb-3">正在重启系统，请稍候...</p>
+                            <div class="progress mb-3">
+                                <div id="restart-progress" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>
+                            </div>
+                            <p class="small text-muted">完成后将自动跳转到登录页面</p>
+                        </div>
+                    `;
+                    document.body.appendChild(loadingDiv);
+
+                    // 进度条动画
+                    const progressBar = document.getElementById('restart-progress');
+                    let progress = 0;
+                    const progressInterval = setInterval(() => {
+                        progress += 2;
+                        if (progress > 100) {
+                            clearInterval(progressInterval);
+                            // 重启完成，跳转到登录页面
+                            window.location.href = '/qrcode';
+                        } else {
+                            progressBar.style.width = `${progress}%`;
+                        }
+                    }, 200); // 20秒完成进度条
+                } else {
+                    // 切换账号失败
+                    switchBtn.disabled = false;
+                    switchBtn.innerHTML = '<i class="bi bi-arrow-repeat me-1"></i>切换账号';
+                    showToast('错误', data.error || '切换账号失败', 'danger');
+                }
+            })
+            .catch(error => {
+                console.error('切换账号失败:', error);
+                switchBtn.disabled = false;
+                switchBtn.innerHTML = '<i class="bi bi-arrow-repeat me-1"></i>切换账号';
+                showToast('错误', '切换账号请求失败: ' + error.message, 'danger');
+            });
+        }
+    }
+
+    function handleEditConfig() {
+        console.log('系统配置按钮被点击');
+        const configModal = new bootstrap.Modal(document.getElementById('config-modal'));
+        const configEditor = document.getElementById('config-editor');
+        const configLoading = document.getElementById('config-loading');
+        const configError = document.getElementById('config-error');
+        const configErrorMessage = document.getElementById('config-error-message');
+        const configEditorContainer = document.getElementById('config-editor-container');
+
+        // 显示加载状态
+        configLoading.style.display = 'block';
+        configError.style.display = 'none';
+        configEditorContainer.style.display = 'none';
+
+        // 显示模态窗口
+        configModal.show();
+
+        // 加载配置文件
+        console.log('尝试加载配置文件');
+        fetch('/api/files/read?path=main_config.toml')
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('服务器响应状态码: ' + response.status);
+                }
+                return response.json();
+            })
+            .then(data => {
+                if (data.success && data.content) {
+                    // 显示配置文件内容
+                    configEditor.value = data.content;
+                    configLoading.style.display = 'none';
+                    configEditorContainer.style.display = 'block';
+                } else {
+                    throw new Error(data.error || '加载配置文件失败');
+                }
+            })
+            .catch(error => {
+                console.error('加载配置文件失败:', error);
+                configLoading.style.display = 'none';
+                configError.style.display = 'block';
+                configErrorMessage.textContent = '加载配置文件失败: ' + error.message;
+            });
+    }
+
+    function handleSaveConfig() {
+        console.log('保存配置按钮被点击');
+        const configModal = new bootstrap.Modal(document.getElementById('config-modal'));
+        const configEditor = document.getElementById('config-editor');
+        const saveConfigBtn = document.getElementById('btn-save-config');
+
+        // 显示加载状态
+        saveConfigBtn.disabled = true;
+        saveConfigBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>保存中...';
+
+        // 发送请求保存配置文件
+        console.log('尝试保存配置文件');
+        fetch('/api/files/write', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                path: 'main_config.toml',
+                content: configEditor.value
+            }),
+            credentials: 'include'  // 确保发送认证Cookie
+        })
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('服务器响应状态码: ' + response.status);
+            }
+            return response.json();
+        })
+        .then(data => {
+            if (data.success) {
+                // 关闭模态窗口
+                configModal.hide();
+
+                // 显示成功提示
+                showToast('成功', '配置文件已保存，系统将在 10 秒后重启', 'success');
+
+                // 显示重启进度
+                const loadingDiv = document.createElement('div');
+                loadingDiv.className = 'restart-overlay';
+                loadingDiv.innerHTML = `
+                    <div class="restart-dialog">
+                        <h4>系统重启中</h4>
+                        <p>配置文件已保存，系统正在重启中，请稍候...</p>
+                        <div class="progress mt-3">
+                            <div id="restart-progress" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>
+                        </div>
+                    </div>
+                `;
+                document.body.appendChild(loadingDiv);
+
+                // 进度条动画
+                const progressBar = document.getElementById('restart-progress');
+                let progress = 0;
+                const progressInterval = setInterval(() => {
+                    progress += 2;
+                    if (progress > 100) {
+                        clearInterval(progressInterval);
+                        // 重启完成，刷新页面
+                        window.location.reload();
+                    } else {
+                        progressBar.style.width = `${progress}%`;
+                    }
+                }, 200); // 20秒完成进度条
+
+                // 调用重启 API
+                setTimeout(() => {
+                    fetch('/api/system/restart', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        credentials: 'include'  // 确保发送认证Cookie
+                    }).catch(error => {
+                        console.error('重启系统失败:', error);
+                        // 即使请求失败也继续显示进度条，因为服务器可能已经在重启中
+                    });
+                }, 1000);
+            } else {
+                // 保存失败
+                saveConfigBtn.disabled = false;
+                saveConfigBtn.innerHTML = '保存并重启';
+                showToast('错误', data.error || '保存配置文件失败', 'danger');
+            }
+        })
+        .catch(error => {
+            console.error('保存配置文件失败:', error);
+            saveConfigBtn.disabled = false;
+            saveConfigBtn.innerHTML = '保存并重启';
+            showToast('错误', '保存配置文件失败: ' + error.message, 'danger');
+        });
+    }
+
     document.addEventListener('DOMContentLoaded', function() {
         const statusDisplay = document.getElementById('bot-status-display');
         const statusDot = document.getElementById('status-dot');
@@ -346,6 +593,13 @@
                     document.getElementById('bot-info').style.display = 'block';
                     const switchBtn = document.getElementById('switch-account');
                     switchBtn.style.display = 'block';
+
+                    // 显示系统配置按钮
+                    const editConfigBtn = document.getElementById('edit-config');
+                    if (editConfigBtn) {
+                        editConfigBtn.style.display = 'block';
+                        console.log('显示系统配置按钮');
+                    }
 
                     // 确保切换账号按钮有事件监听器
                     if (!switchBtn.hasAttribute('data-event-attached')) {
@@ -441,6 +695,7 @@
                     // qrcodeSection.style.display = 'none'; // 注释掉，不再显示二维码区域
                     document.getElementById('bot-info').style.display = 'none';
                     document.getElementById('switch-account').style.display = 'none';
+                    document.getElementById('edit-config').style.display = 'none';
                     break;
                 case 'waiting_login':
                     statusDot.classList.add('waiting');
@@ -450,6 +705,7 @@
                     // loadQRCode(); // 不再加载二维码
                     document.getElementById('bot-info').style.display = 'none';
                     document.getElementById('switch-account').style.display = 'none';
+                    document.getElementById('edit-config').style.display = 'none';
 
                     break;
                 default:
@@ -688,6 +944,8 @@
 
         // 切换账号按钮事件已移动到updateStatusDisplay函数中
 
+        // 在updateStatusDisplay函数中显示系统配置按钮
+
         // 初始化时显示toast功能
         window.showToast = function(title, message, type = 'info') {
             console.log(`Toast: ${title} - ${message} (${type})`);
@@ -720,4 +978,39 @@
         };
     });
 </script>
+<!-- 系统配置模态窗口 -->
+<div class="modal fade" id="config-modal" tabindex="-1" aria-labelledby="config-modal-title" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="config-modal-title">系统配置</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div id="config-loading" class="text-center py-4">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">加载中...</span>
+                    </div>
+                    <p class="mt-2">正在加载配置文件...</p>
+                </div>
+                <div id="config-error" class="alert alert-danger" style="display: none;">
+                    <i class="bi bi-exclamation-triangle-fill me-2"></i>
+                    <span id="config-error-message">加载配置文件失败</span>
+                </div>
+                <div id="config-editor-container" style="display: none;">
+                    <div class="alert alert-info">
+                        <i class="bi bi-info-circle-fill me-2"></i>
+                        请谨慎编辑系统配置文件，错误的配置可能导致系统无法正常运行。保存后需要重启系统才能生效。
+                    </div>
+                    <textarea id="config-editor" class="form-control" style="height: 400px; font-family: monospace;"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" id="btn-save-config" onclick="handleSaveConfig()">保存并重启</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 {% endblock %}

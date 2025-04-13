@@ -890,40 +890,11 @@
                 .then(data => {
                     if (data.success) {
                         // 成功切换账号
-                        alert('已切换账号，系统正在重启，请稍后重新登录...');
-
-                        // 显示加载中的提示
-                        const loadingDiv = document.createElement('div');
-                        loadingDiv.className = 'position-fixed top-0 start-0 w-100 h-100 d-flex justify-content-center align-items-center bg-dark bg-opacity-75';
-                        loadingDiv.style.zIndex = '9999';
-                        loadingDiv.innerHTML = `
-                            <div class="card shadow p-4 text-center">
-                                <div class="spinner-border text-primary mb-3" role="status" style="width: 3rem; height: 3rem;">
-                                    <span class="visually-hidden">加载中...</span>
-                                </div>
-                                <h5 class="mb-2">系统正在重启</h5>
-                                <p class="text-muted mb-2">请稍候，这可能需要几秒钟时间...</p>
-                                <div class="progress mb-3">
-                                    <div id="restart-progress" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>
-                                </div>
-                                <p class="small text-muted">重启完成后将自动跳转到登录页面</p>
-                            </div>
-                        `;
-                        document.body.appendChild(loadingDiv);
-
-                        // 进度条动画
-                        const progressBar = document.getElementById('restart-progress');
-                        let progress = 0;
-                        const progressInterval = setInterval(() => {
-                            progress += 2;
-                            if (progress > 100) {
-                                clearInterval(progressInterval);
-                                // 重启完成，跳转到登录页面
-                                window.location.href = '/qrcode';
-                            } else {
-                                progressBar.style.width = `${progress}%`;
-                            }
-                        }, 200); // 20秒完成进度条
+                        alert('已切换账号，正在重新加载...');
+                        // 延时后刷新页面
+                        setTimeout(() => {
+                            window.location.href = '/qrcode';
+                        }, 1000);
                     } else {
                         // 切换账号失败
                         button.disabled = false;
