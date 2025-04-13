@@ -1,0 +1,430 @@
+{% extends "base.html" %}
+
+{% block page_title %}AI平台管理{% endblock %}
+
+{% block extra_css %}
+    <style>
+        .platform-card {
+            border-radius: 12px;
+            transition: all 0.3s ease;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+            border: none;
+            overflow: hidden;
+        }
+        .platform-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.15);
+        }
+        .platform-header {
+            padding: 15px 18px;
+            border-radius: 12px 12px 0 0;
+            color: white;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background-image: linear-gradient(135deg, #3498db, #2980b9);
+        }
+        .platform-body {
+            padding: 15px;
+            background-color: #f8f9fa;
+        }
+        .platform-footer {
+            padding: 12px 15px;
+            background-color: white;
+            border-top: 1px solid rgba(0, 0, 0, 0.05);
+            display: flex;
+            justify-content: flex-end;
+        }
+        .platform-icon {
+            font-size: 1.8rem;
+            margin-right: 10px;
+            color: rgba(255, 255, 255, 0.9);
+        }
+        .platform-title {
+            margin: 0;
+            font-size: 1.3rem;
+            font-weight: 600;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+        }
+        .platform-description {
+            margin-top: 12px;
+            color: #495057;
+            line-height: 1.5;
+        }
+        .platform-status {
+            display: inline-block;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            margin-top: 12px;
+            font-weight: 500;
+        }
+        .status-enabled {
+            background-color: #d1e7dd;
+            color: #0f5132;
+        }
+        .status-disabled {
+            background-color: #f8d7da;
+            color: #842029;
+        }
+        .form-group {
+            margin-bottom: 18px;
+        }
+        .modal-header {
+            border-radius: 12px 12px 0 0;
+            color: white;
+            background-image: linear-gradient(135deg, #3498db, #2980b9);
+        }
+        .test-result {
+            padding: 12px 15px;
+            border-radius: 8px;
+            margin-top: 15px;
+        }
+        .test-success {
+            background-color: #d1e7dd;
+            color: #0f5132;
+        }
+        .test-error {
+            background-color: #f8d7da;
+            color: #842029;
+        }
+        .config-btn {
+            background-color: #3498db;
+            border-color: #3498db;
+            transition: all 0.2s ease;
+        }
+        .config-btn:hover {
+            background-color: #2980b9;
+            border-color: #2980b9;
+            transform: translateY(-2px);
+        }
+    </style>
+{% endblock %}
+
+{% block content %}
+                <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+                    <h1 class="h2">AI平台管理</h1>
+                </div>
+
+                <div class="alert alert-info" role="alert">
+                    <i class="bi bi-info-circle-fill"></i> 在这里管理AI平台插件，选择一个平台后将自动启用相关插件并禁用其他AI平台插件。
+                </div>
+
+                <!-- AI插件卡片区域 -->
+                <div class="row" id="ai-plugins-container">
+                    {% if ai_plugins %}
+                        {% for plugin in ai_plugins %}
+                            <div class="col-md-4 col-lg-3 mb-4">
+                                <div class="platform-card">
+                                    <div class="platform-header" style="background-color: #3498db">
+                                        <div class="d-flex align-items-center">
+                                            <i class="bi bi-robot platform-icon"></i>
+                                            <h5 class="platform-title">{{ plugin.name }}</h5>
+                                        </div>
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" role="switch"
+                                                id="plugin-{{ plugin.id }}"
+                                                {% if plugin.enabled %}checked{% endif %}
+                                                onchange="togglePlugin('{{ plugin.id }}', this.checked)">
+                                        </div>
+                                    </div>
+                                    <div class="platform-body">
+                                        <p class="platform-description">{{ plugin.description }}</p>
+                                        <div class="platform-status {{ 'status-enabled' if plugin.enabled else 'status-disabled' }}">
+                                            {{ '已启用' if plugin.enabled else '未启用' }}
+                                        </div>
+                                        <div class="mt-2">
+                                            <small class="text-muted">作者: {{ plugin.author }} | 版本: {{ plugin.version }}</small>
+                                        </div>
+                                    </div>
+                                    <div class="platform-footer">
+                                        <button class="btn btn-sm btn-primary config-btn" onclick="showConfig('{{ plugin.id }}')">
+                                            <i class="bi bi-gear"></i> 配置
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        {% endfor %}
+                    {% else %}
+                        <div class="col-12 text-center py-5">
+                            <div class="alert alert-warning">
+                                <i class="bi bi-exclamation-triangle-fill me-2"></i>
+                                未找到AI平台插件。请先安装并标记AI平台插件。
+                            </div>
+                        </div>
+                    {% endif %}
+                </div>
+    <!-- 插件配置模态框 -->
+    <div class="modal" id="plugin-config-modal" tabindex="-1" aria-labelledby="plugin-config-title" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="plugin-config-title"></h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+                </div>
+                <div class="modal-body">
+                    <!-- 加载状态 -->
+                    <div id="plugin-config-loading" class="text-center py-4" style="display: none;">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">加载中...</span>
+                        </div>
+                        <p class="mt-2">正在加载配置...</p>
+                    </div>
+
+                    <!-- 错误提示 -->
+                    <div id="plugin-config-error" class="alert alert-danger d-none" role="alert">
+                        <i class="bi bi-exclamation-triangle-fill me-2"></i>
+                        <span></span>
+                    </div>
+
+                    <!-- 配置表单容器 -->
+                    <div id="plugin-config-form"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">
+                        <i class="bi bi-x-lg me-1"></i>关闭
+                    </button>
+                    <button type="button" class="btn btn-primary" id="plugin-config-save">
+                        <i class="bi bi-save me-1"></i>保存
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 当前选中的插件ID
+        let currentPluginId = null;
+
+        // 切换插件启用状态
+        async function togglePlugin(pluginId, enabled) {
+            try {
+                if (!enabled) {
+                    // 如果是禁用操作，直接执行
+                    const response = await fetch(`/api/plugins/${pluginId}/disable`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        }
+                    });
+
+                    const data = await response.json();
+
+                    if (data.success) {
+                        location.reload();
+                    } else {
+                        document.getElementById(`plugin-${pluginId}`).checked = true;
+                        showError('禁用插件失败: ' + (data.message || '未知错误'));
+                    }
+                } else {
+                    // 如果是启用操作，首先禁用其他所有AI平台插件
+                    // 获取所有已启用的AI平台插件
+                    const enabledPlugins = [];
+                    document.querySelectorAll('.form-check-input:checked').forEach(checkbox => {
+                        if (checkbox.id !== `plugin-${pluginId}`) {
+                            enabledPlugins.push(checkbox.id.replace('plugin-', ''));
+                        }
+                    });
+
+                    // 禁用其他已启用的AI平台插件
+                    for (const otherPluginId of enabledPlugins) {
+                        try {
+                            await fetch(`/api/plugins/${otherPluginId}/disable`, {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json'
+                                }
+                            });
+                        } catch (error) {
+                            console.error(`禁用插件 ${otherPluginId} 失败:`, error);
+                        }
+                    }
+
+                    // 启用当前插件
+                    const response = await fetch(`/api/plugins/${pluginId}/enable`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        }
+                    });
+
+                    const data = await response.json();
+
+                    if (data.success) {
+                        location.reload();
+                    } else {
+                        document.getElementById(`plugin-${pluginId}`).checked = false;
+                        showError('启用插件失败: ' + (data.message || '未知错误'));
+                    }
+                }
+            } catch (error) {
+                // 恢复开关状态
+                document.getElementById(`plugin-${pluginId}`).checked = !enabled;
+                showError('切换插件状态失败: ' + error.message);
+            }
+        }
+
+        // 删除重复声明
+
+        // 显示配置模态框
+        async function showConfig(platformId) {
+            currentPluginId = platformId;
+
+            try {
+                // 获取插件信息
+                const plugin = { name: platformId };
+
+                // 重置表单状态
+                document.getElementById('plugin-config-loading').style.display = 'block';
+                document.getElementById('plugin-config-error').classList.add('d-none');
+                document.getElementById('plugin-config-form').innerHTML = '';
+
+                // 创建新的模态框实例
+                const modalEl = document.getElementById('plugin-config-modal');
+                const oldModal = bootstrap.Modal.getInstance(modalEl);
+                if (oldModal) {
+                    oldModal.dispose();
+                }
+
+                const modal = new bootstrap.Modal(modalEl);
+                modal.show();
+
+                // 设置标题
+                document.getElementById('plugin-config-title').textContent = `${platformId} 配置文件`;
+
+                // 获取配置文件路径
+                const response = await fetch(`/api/plugin_config_file?plugin_id=${platformId}`);
+                const data = await response.json();
+
+                if (data.success && data.config_file) {
+                    // 获取文件内容
+                    const contentResponse = await fetch(`/api/files/read?path=${encodeURIComponent(data.config_file)}`);
+                    const contentData = await contentResponse.json();
+
+                    if (contentData.success) {
+                        // 创建文本编辑器
+                        const formContainer = document.getElementById('plugin-config-form');
+                        formContainer.innerHTML = `
+                            <div class="alert alert-info mb-3">
+                                <i class="bi bi-info-circle-fill me-2"></i>
+                                正在编辑: ${data.config_file}
+                            </div>
+                            <div class="mb-3">
+                                <textarea id="config-editor" class="form-control" style="min-height: 300px; font-family: monospace;">${contentData.content}</textarea>
+                            </div>
+                        `;
+
+                        // 存储当前配置文件路径，用于保存
+                        document.getElementById('plugin-config-save').setAttribute('data-config-file', data.config_file);
+                        document.getElementById('plugin-config-save').textContent = '保存';
+
+                        document.getElementById('plugin-config-loading').style.display = 'none';
+                    } else {
+                        throw new Error(contentData.error || '无法读取配置文件内容');
+                    }
+                } else {
+                    throw new Error(data.error || '无法获取配置文件路径');
+                }
+            } catch (error) {
+                console.error('加载插件配置失败:', error);
+
+                // 显示错误
+                document.getElementById('plugin-config-loading').style.display = 'none';
+                const errorEl = document.getElementById('plugin-config-error');
+                errorEl.classList.remove('d-none');
+                errorEl.querySelector('span').textContent = error.message || '加载配置失败';
+            }
+        }
+
+        // 保存配置
+        document.getElementById('plugin-config-save').addEventListener('click', async function() {
+            try {
+                // 获取配置文件路径
+                const configFile = document.getElementById('plugin-config-save').getAttribute('data-config-file');
+                if (!configFile) {
+                    throw new Error('未找到配置文件路径');
+                }
+
+                // 获取编辑器内容
+                const content = document.getElementById('config-editor').value;
+
+                // 显示保存中状态
+                const saveBtn = document.getElementById('plugin-config-save');
+                saveBtn.disabled = true;
+                saveBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>保存中...';
+
+                // 发送保存请求
+                const response = await fetch('/api/files/write', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        path: configFile,
+                        content: content
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    // 显示成功提示
+                    const successAlert = document.createElement('div');
+                    successAlert.className = 'alert alert-success alert-dismissible fade show position-fixed top-0 start-50 translate-middle-x mt-3';
+                    successAlert.style.zIndex = '9999';
+                    successAlert.innerHTML = `
+                        <i class="bi bi-check-circle-fill me-2"></i> 配置已保存
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="关闭"></button>
+                    `;
+                    document.body.appendChild(successAlert);
+
+                    // 关闭模态框
+                    const modalEl = document.getElementById('plugin-config-modal');
+                    const modalInstance = bootstrap.Modal.getInstance(modalEl);
+                    modalInstance.hide();
+
+                    // 3秒后自动关闭提示并刷新页面
+                    setTimeout(() => {
+                        successAlert.classList.remove('show');
+                        setTimeout(() => {
+                            successAlert.remove();
+                            location.reload();
+                        }, 150);
+                    }, 2000);
+                } else {
+                    throw new Error(data.error || '保存失败');
+                }
+            } catch (error) {
+                console.error('保存配置失败:', error);
+                showError(`保存配置失败: ${error.message}`);
+            } finally {
+                // 恢复保存按钮状态
+                const saveBtn = document.getElementById('plugin-config-save');
+                saveBtn.disabled = false;
+                saveBtn.textContent = '保存';
+            }
+        });
+
+        // 显示错误消息
+        function showError(message) {
+            const alert = document.createElement('div');
+            alert.className = 'alert alert-danger alert-dismissible fade show position-fixed top-0 start-50 translate-middle-x mt-3';
+            alert.style.zIndex = '9999';
+            alert.innerHTML = `
+                <i class="bi bi-exclamation-triangle-fill me-2"></i> ${message}
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="关闭"></button>
+            `;
+
+            document.body.appendChild(alert);
+
+            // 5秒后自动关闭
+            setTimeout(() => {
+                alert.classList.remove('show');
+                setTimeout(() => alert.remove(), 150);
+            }, 5000);
+        }
+
+
+    </script>
+{% endblock %}

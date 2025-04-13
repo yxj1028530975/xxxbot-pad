@@ -813,6 +813,55 @@ def init_app():
     logger.info(f"管理后台初始化完成，将在 {config['host']}:{config['port']} 上启动")
 
 def setup_routes():
+    # 注册所有模块化路由
+    try:
+        from .routes.register_routes import register_all_routes
+        register_all_routes(app)
+        logger.info("已注册所有模块化路由")
+    except Exception as e:
+        logger.error(f"注册模块化路由失败: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+
+    # AI平台管理页面路由
+    @app.get("/ai-platforms", response_class=HTMLResponse)
+    async def ai_platforms_page(request: Request):
+        """显示AI平台管理页面"""
+        # 检查认证状态
+        try:
+            username = await check_auth(request)
+            if not username:
+                return RedirectResponse(url="/login?next=/ai-platforms", status_code=302)
+        except HTTPException:
+            return RedirectResponse(url="/login?next=/ai-platforms", status_code=302)
+
+        # 获取版本信息
+        version_info = get_version_info()
+        version = version_info.get("version", "1.0.0")
+        update_available = version_info.get("update_available", False)
+        latest_version = version_info.get("latest_version", "")
+        update_url = version_info.get("update_url", "")
+        update_description = version_info.get("update_description", "")
+
+        # 获取AI平台插件列表
+        from utils.plugin_manager import plugin_manager
+        ai_plugins = plugin_manager.get_ai_platform_plugins()
+
+        return templates.TemplateResponse(
+            "ai_platforms.html",
+            {
+                "request": request,
+                "active_page": "ai_platforms",
+                "version": version,
+                "update_available": update_available,
+                "latest_version": latest_version,
+                "update_url": update_url,
+                "update_description": update_description,
+                "ai_plugins": ai_plugins  # 添加AI插件列表
+            }
+        )
+
+
     # 登录页面
     @app.get("/login", response_class=HTMLResponse)
     async def login_page(request: Request):
