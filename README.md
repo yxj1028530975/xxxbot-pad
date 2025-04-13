@@ -196,7 +196,20 @@ XXXBot 是一个基于微信的智能机器人系统，通过整合多种 API �
 
    这将自动拉取最新的镜像并启动服务，所有数据将保存在 Docker 卷中。
 
-2. **自定义管理员账号密码**（可选）
+2. **更新到最新版本**
+
+   ```bash
+   # 拉取最新镜像
+   docker-compose pull
+
+   # 重启服务
+   docker-compose down
+   docker-compose up -d
+   ```
+
+   我们已经更新了 `docker-compose.yml` 文件，添加了 `pull_policy: always` 设置，确保每次启动容器时都会检查并拉取最新的镜像。更多更新相关的详细信息，请查看 [UPDATE_GUIDE.md](UPDATE_GUIDE.md) 文件。
+
+3. **自定义管理员账号密码**（可选）
 
    编辑 docker-compose.yml 文件，修改环境变量：
 

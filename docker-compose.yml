@@ -3,12 +3,16 @@ services:
     image: nanssye/xxxbot-pad:latest
     container_name: xxxbot-pad
     restart: unless-stopped
+    pull_policy: always # 确保每次都检查并拉取最新的镜像
     ports:
       - "9090:9090" # 管理后台端口
       - "3000:3000" # WeTTy终端端口
     environment:
       - ADMIN_USERNAME=admin
       - ADMIN_PASSWORD=admin123
+    volumes:
+      - xxxbot-pad:/app # 持久化存储应用数据
+      - redis_data:/var/lib/redis # 持久化存储Redis数据
 
 volumes:
   redis_data:
