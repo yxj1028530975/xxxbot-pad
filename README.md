@@ -103,6 +103,29 @@ XXXBot 是一个基于微信的智能机器人系统，通过整合多种 API �
    - 复制`main_config.toml.example`为`main_config.toml`并填写配置
    - 设置管理员 ID 和其他基本参数
 
+   **设置管理员：**
+
+   在 `main_config.toml` 文件中的 `[XYBot]` 部分设置管理员：
+
+   ```toml
+   [XYBot]
+   # 管理员微信ID，可以设置多个，用英文逗号分隔
+   admins = ["wxid_l2221111", "wxid_l111111"]  # 管理员的wxid列表，可从消息日志中获取
+   ```
+
+   **设置 GitHub 加速代理：**
+
+   在 `main_config.toml` 文件中的 `[XYBot]` 部分设置 GitHub 加速代理：
+
+   ```toml
+   [XYBot]
+   # GitHub加速服务设置
+   # 可选值: "", "https://ghfast.top/", "https://gh-proxy.com/", "https://mirror.ghproxy.com/"
+   # 空字符串表示直连不使用加速
+   # 注意: 如果使用加速服务，请确保以"/"结尾
+   github-proxy = "https://ghfast.top/"
+   ```
+
 6. **启动必要的服务**
 
    **需要先启动 Redis 和 PAD 服务**（注意启动顺序！）：
