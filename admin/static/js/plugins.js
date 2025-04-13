@@ -86,6 +86,38 @@ document.addEventListener('DOMContentLoaded', function() {
     // 加载插件市场
     loadPluginMarket();
 
+    // 为插件过滤按钮添加点击事件
+    const filterButtons = document.querySelectorAll('.plugin-filter .btn-group .btn');
+    if (filterButtons.length > 0) {
+        filterButtons.forEach(button => {
+            button.addEventListener('click', function() {
+                // 移除所有按钮的active类
+                filterButtons.forEach(btn => btn.classList.remove('active'));
+                // 添加当前按钮的active类
+                this.classList.add('active');
+                // 获取过滤类型
+                const filter = this.getAttribute('data-filter');
+                // 更新当前过滤器
+                currentFilter = filter;
+                // 过滤插件
+                filterPlugins(filter);
+            });
+        });
+        console.log('插件过滤按钮事件已添加');
+    } else {
+        console.warn('找不到插件过滤按钮，无法添加事件监听器');
+    }
+
+    // 为刷新插件按钮添加点击事件
+    const refreshPluginsBtn = document.getElementById('btn-refresh-plugins');
+    if (refreshPluginsBtn) {
+        refreshPluginsBtn.addEventListener('click', function() {
+            loadPlugins();
+        });
+    } else {
+        console.warn('找不到刷新插件按钮，无法添加事件监听器');
+    }
+
     // 为刷新市场按钮添加点击事件
     const refreshMarketBtn = document.getElementById('btn-refresh-market');
     if (refreshMarketBtn) {
@@ -116,14 +148,24 @@ document.addEventListener('DOMContentLoaded', function() {
         console.error('找不到提交审核按钮，无法添加事件监听器');
     }
 
-    // 添加搜索事件监听器
-    const searchInput = document.getElementById('market-search-input');
-    if (searchInput) {
-        searchInput.addEventListener('input', function() {
+    // 添加市场搜索事件监听器
+    const marketSearchInput = document.getElementById('search-market');
+    if (marketSearchInput) {
+        marketSearchInput.addEventListener('input', function() {
             searchMarketPlugins(this.value);
         });
     } else {
         console.warn('找不到市场搜索输入框，搜索功能不可用');
+    }
+
+    // 添加插件搜索事件监听器
+    const pluginSearchInput = document.getElementById('plugin-search-input');
+    if (pluginSearchInput) {
+        pluginSearchInput.addEventListener('input', function() {
+            searchPlugins(this.value);
+        });
+    } else {
+        console.warn('找不到插件搜索输入框，搜索功能不可用');
     }
 
     // 检查并处理离线提交的插件
@@ -137,6 +179,17 @@ document.addEventListener('DOMContentLoaded', function() {
     const emergencyButton = document.getElementById('emergency-backdrop-cleaner');
     if (emergencyButton) {
         emergencyButton.remove();
+    }
+
+    // 为添加插件按钮添加点击事件
+    const addPluginBtn = document.getElementById('btn-add-plugin');
+    if (addPluginBtn) {
+        addPluginBtn.addEventListener('click', function() {
+            // 滚动到插件市场部分
+            document.querySelector('.card[data-aos="fade-up"][data-aos-delay="100"]').scrollIntoView({ behavior: 'smooth' });
+        });
+    } else {
+        console.warn('找不到添加插件按钮，无法添加事件监听器');
     }
 
     // 配置保存按钮点击事件
