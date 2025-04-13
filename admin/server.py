@@ -1654,16 +1654,167 @@ except:
                 except Exception as e:
                     logger.error(f"更新版本信息文件失败: {e}")
 
-            return {
-                "success": True,
-                "update_available": version_info.get("update_available", False),
-                "latest_version": version_info.get("latest_version", ""),
-                "update_url": version_info.get("update_url", ""),
-                "update_description": version_info.get("update_description", "")
-            }
+            return version_info
         except Exception as e:
-            logger.error(f"版本检查失败: {str(e)}")
-            return {"success": False, "error": str(e)}
+            logger.error(f"版本检查失败: {e}")
+            return {"success": False, "error": f"版本检查失败: {e}"}
+
+    # API: 版本更新
+    @app.post("/api/version/update", response_class=JSONResponse)
+    async def api_version_update(request: Request):
+        try:
+            # 检查认证状态
+            username = await check_auth(request)
+            if not username:
+                return JSONResponse(status_code=401, content={"success": False, "error": "未认证"})
+
+            # 获取请求数据
+            data = await request.json()
+            current_version = data.get("current_version", "")
+
+            # 获取版本信息
+            version_info = get_version_info()
+            if not version_info.get("update_available", False):
+                return {"success": False, "error": "没有可用的更新"}
+
+            # 创建临时目录
+            import tempfile
+            import shutil
+            import zipfile
+            import io
+
+            temp_dir = tempfile.mkdtemp(prefix="xxxbot_update_")
+            logger.info(f"创建临时目录: {temp_dir}")
+
+            try:
+                # 构建GitHub仓库URL
+                github_url = "https://github.com/NanSsye/xxxbot-pad"
+
+                # 构建ZIP下载链接
+                zip_url = f"{github_url}/archive/refs/heads/main.zip"
+                logger.info(f"正在从 {zip_url} 下载最新代码...")
+
+                # 下载ZIP文件
+                try:
+                    response = requests.get(zip_url, timeout=30)
+                    if response.status_code != 200:
+                        return {"success": False, "error": f"下载更新失败: HTTP {response.status_code}"}
+                except Exception as e:
+                    logger.error(f"下载更新失败: {str(e)}")
+                    return {"success": False, "error": f"下载更新失败: {str(e)}"}
+
+                # 解压ZIP文件到临时目录
+                z = zipfile.ZipFile(io.BytesIO(response.content))
+                z.extractall(temp_dir)
+                logger.info(f"已解压文件到临时目录: {temp_dir}")
+
+                # 获取解压后的目录名称
+                extracted_dir = None
+                for item in os.listdir(temp_dir):
+                    item_path = os.path.join(temp_dir, item)
+                    if os.path.isdir(item_path):
+                        extracted_dir = item_path
+                        break
+
+                if not extracted_dir:
+                    return {"success": False, "error": "解压后未找到有效目录"}
+
+                logger.info(f"找到解压后的目录: {extracted_dir}")
+
+                # 获取项目根目录
+                root_dir = os.path.dirname(current_dir)
+                logger.info(f"项目根目录: {root_dir}")
+
+                # 需要更新的文件和目录列表
+                update_items = [
+                    "admin",
+                    "WechatAPI",
+                    "version.json",
+                    "bot_core.py",
+                    "main.py"
+                ]
+
+                # 备份当前版本的文件
+                backup_dir = os.path.join(root_dir, "backup_" + datetime.now().strftime("%Y%m%d%H%M%S"))
+                os.makedirs(backup_dir, exist_ok=True)
+                logger.info(f"创建备份目录: {backup_dir}")
+
+                # 备份并更新文件
+                for item in update_items:
+                    src_path = os.path.join(root_dir, item)
+                    if os.path.exists(src_path):
+                        # 备份文件
+                        backup_path = os.path.join(backup_dir, item)
+                        if os.path.isdir(src_path):
+                            shutil.copytree(src_path, backup_path)
+                            logger.info(f"已备份目录: {item} 到 {backup_path}")
+                        else:
+                            # 确保目标目录存在
+                            os.makedirs(os.path.dirname(backup_path), exist_ok=True)
+                            shutil.copy2(src_path, backup_path)
+                            logger.info(f"已备份文件: {item} 到 {backup_path}")
+
+                    # 从下载的文件中复制新版本
+                    new_src_path = os.path.join(extracted_dir, item)
+                    if os.path.exists(new_src_path):
+                        dst_path = os.path.join(root_dir, item)
+
+                        # 如果目标是目录，先删除它
+                        if os.path.isdir(dst_path):
+                            shutil.rmtree(dst_path)
+                        elif os.path.exists(dst_path):
+                            os.remove(dst_path)
+
+                        # 复制新文件
+                        if os.path.isdir(new_src_path):
+                            shutil.copytree(new_src_path, dst_path)
+                            logger.info(f"已更新目录: {item}")
+                        else:
+                            shutil.copy2(new_src_path, dst_path)
+                            logger.info(f"已更新文件: {item}")
+                    else:
+                        logger.warning(f"在下载的文件中未找到: {item}")
+
+                # 更新版本信息
+                version_info["version"] = version_info["latest_version"]
+                version_info["update_available"] = False
+                version_info["last_check"] = datetime.now().isoformat()
+
+                version_file = os.path.join(root_dir, "version.json")
+                with open(version_file, "w", encoding="utf-8") as f:
+                    json.dump(version_info, f, ensure_ascii=False, indent=2)
+
+                logger.info(f"更新版本信息文件成功: {version_file}")
+
+                # 清理临时目录
+                shutil.rmtree(temp_dir)
+                logger.info(f"已清理临时目录: {temp_dir}")
+
+                # 创建一个后台任务来重启服务
+                asyncio.create_task(restart_server())
+
+                return {
+                    "success": True,
+                    "message": "更新成功，系统将在10秒后自动重启...",
+                    "version": version_info["version"]
+                }
+
+            except Exception as e:
+                logger.error(f"更新过程中出错: {str(e)}")
+                # 清理临时目录
+                if os.path.exists(temp_dir):
+                    shutil.rmtree(temp_dir)
+                return {"success": False, "error": f"更新失败: {str(e)}"}
+        except Exception as e:
+            logger.error(f"版本更新失败: {str(e)}")
+            return {"success": False, "error": f"版本更新失败: {str(e)}"}
+
+    # 重启服务器的异步函数
+    async def restart_server():
+        # 等待10秒，让前端有时间接收响应
+        await asyncio.sleep(10)
+        # 调用重启容器的函数
+        await api_restart_container(None)
 
         try:
             # 获取状态数据

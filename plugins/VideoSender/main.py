@@ -143,22 +143,22 @@ class VideoSender(PluginBase):
         os.makedirs(temp_dir, exist_ok=True)
         input_path = os.path.join(temp_dir, "input_video.mp4")
         output_path = os.path.join(temp_dir, "fixed_video.mp4")
-        
+
         try:
             # 保存输入视频
             with open(input_path, "wb") as f:
                 f.write(video_data)
-                
+
             # 使用ffmpeg修复视频时长
             if self.ffmpeg_available:
                 # 先获取视频信息
                 info_process = await asyncio.create_subprocess_exec(
-                    self.ffmpeg_path, "-i", input_path, 
+                    self.ffmpeg_path, "-i", input_path,
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE
                 )
                 _, stderr = await info_process.communicate()
                 stderr_str = stderr.decode()
-                
+
                 # 从ffmpeg输出中提取时长信息
                 duration_match = re.search(r"Duration: (\d+):(\d+):(\d+)\.(\d+)", stderr_str)
                 if duration_match:
@@ -166,15 +166,20 @@ class VideoSender(PluginBase):
                     minutes = int(duration_match.group(2))
                     seconds = int(duration_match.group(3))
                     milliseconds = int(duration_match.group(4))
-                    
+
                     # 计算总秒数
                     total_seconds = hours * 3600 + minutes * 60 + seconds + milliseconds / 100
-                    
+
                     logger.info(f"处理视频：时长{total_seconds}秒")
-                    
-                    # 将秒数除以1000，微信播放器会将毫秒当做秒显示
-                    adjusted_seconds = total_seconds / 1000
-                    
+
+                    # 不要除以1000，这会导致视频时长过短
+                    # 如果视频超过5秒，将其限制在5秒内
+                    if total_seconds > 5:
+                        logger.warning(f"视频时长超过5秒，将其限制在5秒")
+                        adjusted_seconds = 5
+                    else:
+                        adjusted_seconds = total_seconds
+
                     # 使用ffmpeg处理视频，设置调整后的时长元数据
                     process = await asyncio.create_subprocess_exec(
                         self.ffmpeg_path,
@@ -197,17 +202,17 @@ class VideoSender(PluginBase):
                         stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE
                     )
-                
+
                 stdout, stderr = await process.communicate()
-                
+
                 if process.returncode != 0:
                     logger.error(f"修复视频时长失败")
                     return video_data  # 如果修复失败，返回原始视频数据
-                
+
                 # 读取修复后的视频
                 with open(output_path, "rb") as f:
                     fixed_video_data = f.read()
-                    
+
                 logger.debug("视频时长处理完成")
                 return fixed_video_data
             else:
@@ -281,7 +286,7 @@ class VideoSender(PluginBase):
             source_list = "\n".join(source_names)
             await bot.send_text_message(chat_id, f"可用的视频系列：\n{source_list}")
             return False  # 返回 False，阻止后续执行
-            
+
         # 处理随机视频命令
         if content == "随机视频":
             source_name = ""  # 空字符串表示随机选择
@@ -309,27 +314,85 @@ class VideoSender(PluginBase):
                     if self.ffmpeg_available:
                         logger.info("开始修复视频时长...")
                         video_data = await self._fix_video_duration(video_data)
-                        
-                    image_base64 = None
-                    if self.ffmpeg_available:
-                        # 获取缩略图
-                        image_base64 = await self._extract_thumbnail_from_video(video_data)
 
-                        if image_base64:
-                            logger.info("成功提取缩略图")
-                        else:
-                            logger.warning("未能成功提取缩略图")
-                    else:
-                        await bot.send_text_message(chat_id, "由于 ffmpeg 未安装，无法提取缩略图。")
+                    # 不需要提取缩略图，直接发送视频
+
+                    # 如果视频超过5秒，将其裁剪到5秒
+                    if self.ffmpeg_available:
+                        try:
+                            # 使用ffprobe获取视频时长
+                            temp_dir = "temp_videos"
+                            os.makedirs(temp_dir, exist_ok=True)
+                            video_path = os.path.join(temp_dir, "temp_video_length.mp4")
+
+                            # 保存视频到临时文件
+                            with open(video_path, "wb") as f:
+                                f.write(video_data)
+
+                            # 使用ffprobe获取视频时长
+                            process = await asyncio.create_subprocess_exec(
+                                self.ffmpeg_path, "-i", video_path,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE
+                            )
+                            _, stderr = await process.communicate()
+                            stderr_str = stderr.decode()
+
+                            # 从ffmpeg输出中提取时长信息
+                            duration_match = re.search(r"Duration: (\d+):(\d+):(\d+)\.(\d+)", stderr_str)
+                            if duration_match:
+                                hours = int(duration_match.group(1))
+                                minutes = int(duration_match.group(2))
+                                seconds = int(duration_match.group(3))
+                                milliseconds = int(duration_match.group(4))
+
+                                # 计算总秒数
+                                total_seconds = hours * 3600 + minutes * 60 + seconds + milliseconds / 100
+                                logger.info(f"视频时长: {total_seconds}秒")
+
+                                # 如果视频超过5秒，将其裁剪到5秒
+                                if total_seconds > 5:
+                                    logger.warning(f"视频时长超过5秒，将其裁剪到5秒")
+                                    # 使用ffmpeg裁剪视频
+                                    crop_output_path = os.path.join(temp_dir, "cropped_video.mp4")
+                                    crop_process = await asyncio.create_subprocess_exec(
+                                        self.ffmpeg_path,
+                                        "-i", video_path,
+                                        "-t", "5",  # 只取前5秒
+                                        "-c:v", "copy",  # 复制视频流，不重新编码
+                                        "-c:a", "copy",  # 复制音频流，不重新编码
+                                        crop_output_path,
+                                        stdout=subprocess.PIPE,
+                                        stderr=subprocess.PIPE
+                                    )
+                                    await crop_process.communicate()
+
+                                    if crop_process.returncode == 0:
+                                        # 读取裁剪后的视频
+                                        with open(crop_output_path, "rb") as f:
+                                            video_data = f.read()
+                                        logger.info(f"成功裁剪视频到5秒")
+                                    else:
+                                        logger.warning(f"裁剪视频失败，使用原始视频")
+
+                            # 清理临时文件
+                            shutil.rmtree(temp_dir, ignore_errors=True)
+                        except Exception as e:
+                            logger.warning(f"处理视频时长失败: {e}")
 
                     try:
                         video_base64 = base64.b64encode(video_data).decode("utf-8")
                         logger.debug(f"视频 Base64 长度: {len(video_base64) if video_base64 else '无效'}")
-                        logger.debug(f"图片 Base64 长度: {len(image_base64) if image_base64 else '无效'}")
 
-                        # 发送视频消息
-                        await bot.send_video_message(chat_id, video=video_base64, image=image_base64 or "None")
-                        logger.info(f"成功发送视频到 {chat_id}")
+                        # 直接发送视频，不发送图片
+                        try:
+                            # 不使用缩略图发送视频
+                            logger.info(f"尝试直接发送视频，不使用缩略图")
+                            await bot.send_video_message(chat_id, video=video_base64)
+                            logger.info(f"成功发送视频到 {chat_id}")
+                            return False
+                        except Exception as e:
+                            logger.exception(f"发送视频失败: {e}")
+                            await bot.send_text_message(chat_id, "发送视频失败，请稍后重试。")
 
                     except binascii.Error as e:
                         logger.error(f"Base64 编码失败： {e}")
