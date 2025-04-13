@@ -20,6 +20,12 @@ debug = true               # 是否开启调试模式
 version = "v1.0.0"                    # 版本号，请勿修改
 ignore-protection = true             # 是否忽略风控保护机制，建议保持false
 
+# GitHub加速服务设置
+# 可选值: "", "https://ghfast.top/", "https://gh-proxy.com/", "https://mirror.ghproxy.com/"
+# 空字符串表示直连不使用加速
+# 注意: 如果使用加速服务，请确保以"/"结尾
+github-proxy = "https://ghfast.top/"
+
 # SQLite数据库地址，一般无需修改
 XYBotDB-url = "sqlite:///database/xybot.db"
 msgDB-url = "sqlite+aiosqlite:///database/message.db"

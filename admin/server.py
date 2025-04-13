@@ -39,6 +39,11 @@ import platform
 import socket
 import re
 
+# 导入GitHub加速服务工具
+# 注意：这里使用相对导入，因为admin目录不在Python模块搜索路径中
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from utils.github_proxy import get_github_url
+
 # 导入插件基类
 from utils.plugin_base import PluginBase
 import subprocess
@@ -1692,11 +1697,8 @@ except:
             logger.info(f"创建临时目录: {temp_dir}")
 
             try:
-                # 构建GitHub仓库URL
-                github_url = "https://ghfast.top/github.com/NanSsye/xxxbot-pad"
-
                 # 构建ZIP下载链接
-                zip_url = f"{github_url}/archive/refs/heads/main.zip"
+                zip_url = get_github_url("https://github.com/NanSsye/xxxbot-pad/archive/refs/heads/main.zip")
                 logger.info(f"正在从 {zip_url} 下载最新代码...")
 
                 # 下载ZIP文件
@@ -1734,6 +1736,7 @@ except:
                 update_items = [
                     "admin",
                     "WechatAPI",
+                    "utils",
                     "version.json",
                     "bot_core.py",
                     "main.py"
@@ -5718,16 +5721,16 @@ def get_bot(wxid):
                     github_url = github_url[:-4]
 
                 # 尝试下载main分支
-                zip_url = f"https://ghfast.top/{github_url}/archive/refs/heads/main.zip"
+                zip_url = get_github_url(f"https://github.com/{github_url}/archive/refs/heads/main.zip")
                 logger.info(f"正在从 {zip_url} 下载插件...")
 
                 try:
                     response = requests.get(zip_url, timeout=30)
                     if response.status_code != 200:
                         # 尝试使用master分支
-                        zip_url = f"{github_url}/archive/refs/heads/master.zip"
-                        logger.info(f"尝试从master分支下载: {zip_url}")
-                        response = requests.get(zip_url, timeout=30)
+                        master_url = get_github_url(f"https://github.com/{github_url}/archive/refs/heads/master.zip")
+                        logger.info(f"尝试从master分支下载: {master_url}")
+                        response = requests.get(master_url, timeout=30)
 
                     if response.status_code != 200:
                         return {"success": False, "error": f"下载插件失败: HTTP {response.status_code}"}
@@ -5950,9 +5953,10 @@ def get_bot(wxid):
             try:
                 # 构建 ZIP 下载链接
                 if github_url.endswith('.git'):
-                    zip_url = github_url[:-4] + '/archive/refs/heads/main.zip'
-                else:
-                    zip_url = github_url + '/archive/refs/heads/main.zip'
+                    github_url = github_url[:-4]
+
+                # 使用GitHub加速服务
+                zip_url = get_github_url(f"https://github.com/{github_url}/archive/refs/heads/main.zip")
 
                 # 下载 ZIP 文件
                 logger.info(f"正在从 {zip_url} 下载插件...")
@@ -5960,9 +5964,9 @@ def get_bot(wxid):
                     response = requests.get(zip_url, timeout=30)
                     if response.status_code != 200:
                         # 尝试使用 master 分支
-                        zip_url = zip_url.replace('/main.zip', '/master.zip')
-                        logger.info(f"尝试从 master 分支下载: {zip_url}")
-                        response = requests.get(zip_url, timeout=30)
+                        master_url = get_github_url(f"https://github.com/{github_url}/archive/refs/heads/master.zip")
+                        logger.info(f"尝试从 master 分支下载: {master_url}")
+                        response = requests.get(master_url, timeout=30)
                 except Exception as e:
                     logger.error(f"下载插件失败: {str(e)}")
                     return {"success": False, "error": f"下载插件失败: {str(e)}"}
