@@ -2913,7 +2913,22 @@ except:
     @app.route('/qrcode')
     async def page_qrcode(request):
         """二维码页面，不需要认证"""
-        return templates.TemplateResponse("qrcode.html", {"request": request})
+        # 获取版本信息
+        version_info = get_version_info()
+        version = version_info.get("version", "1.0.0")
+        update_available = version_info.get("update_available", False)
+        latest_version = version_info.get("latest_version", "")
+        update_url = version_info.get("update_url", "")
+        update_description = version_info.get("update_description", "")
+
+        return templates.TemplateResponse("qrcode.html", {
+            "request": request,
+            "version": version,
+            "update_available": update_available,
+            "latest_version": latest_version,
+            "update_url": update_url,
+            "update_description": update_description
+        })
 
     @app.route('/qrcode_redirect')
     async def qrcode_redirect(request):
@@ -2933,7 +2948,24 @@ except:
 
             logger.debug(f"用户 {username} 访问集成文件管理器页面")
             # 认证成功，显示集成了文件管理器的界面
-            return templates.TemplateResponse("files_integrated.html", {"request": request})
+
+            # 获取版本信息
+            version_info = get_version_info()
+            version = version_info.get("version", "1.0.0")
+            update_available = version_info.get("update_available", False)
+            latest_version = version_info.get("latest_version", "")
+            update_url = version_info.get("update_url", "")
+            update_description = version_info.get("update_description", "")
+
+            return templates.TemplateResponse("files_integrated.html", {
+                "request": request,
+                "current_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "version": version,
+                "update_available": update_available,
+                "latest_version": latest_version,
+                "update_url": update_url,
+                "update_description": update_description
+            })
         except Exception as e:
             logger.error(f"访问文件管理器集成页面失败: {str(e)}")
             return JSONResponse(
@@ -2957,7 +2989,23 @@ except:
 
             logger.debug(f"用户 {username} 访问文件管理器页面")
             # 认证成功，显示文件管理器页面
-            return templates.TemplateResponse("file-manager.html", {"request": request})
+
+            # 获取版本信息
+            version_info = get_version_info()
+            version = version_info.get("version", "1.0.0")
+            update_available = version_info.get("update_available", False)
+            latest_version = version_info.get("latest_version", "")
+            update_url = version_info.get("update_url", "")
+            update_description = version_info.get("update_description", "")
+
+            return templates.TemplateResponse("file-manager.html", {
+                "request": request,
+                "version": version,
+                "update_available": update_available,
+                "latest_version": latest_version,
+                "update_url": update_url,
+                "update_description": update_description
+            })
         except Exception as e:
             logger.error(f"访问文件管理器页面失败: {str(e)}")
             return JSONResponse(
