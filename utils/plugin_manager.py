@@ -41,7 +41,8 @@ class PluginManager:
                 "author": plugin_class.author,
                 "version": plugin_class.version,
                 "enabled": False,
-                "class": plugin_class
+                "class": plugin_class,
+                "is_ai_platform": getattr(plugin_class, 'is_ai_platform', False)  # 检查是否为AI平台插件
             }
 
             # 如果插件被禁用则不加载
@@ -130,6 +131,20 @@ class PluginManager:
                                 obj != PluginBase and
                                 obj.__name__ == plugin_name):
                             found = True
+
+                            # 检查是否为AI平台插件
+                            is_ai_platform = getattr(obj, 'is_ai_platform', False)
+
+                            # 如果是AI平台插件，先禁用其他所有AI平台插件
+                            if is_ai_platform:
+                                logger.info(f"启用AI平台插件 {plugin_name}，将禁用其他AI平台插件")
+
+                                # 遍历已启用的插件，禁用其他AI平台插件
+                                for plugin in list(self.plugins):
+                                    if getattr(plugin.__class__, 'is_ai_platform', False) and plugin.__class__.__name__ != plugin_name:
+                                        logger.info(f"禁用AI平台插件: {plugin.__class__.__name__}")
+                                        await self.unload_plugin(plugin.__class__.__name__)
+
                             return await self.load_plugin(bot, obj)
             except:
                 logger.error(f"检查 {dirname} 时发生错误: {traceback.format_exc()}")
@@ -190,7 +205,7 @@ class PluginManager:
 
     async def reload_all_plugins(self, bot: WechatAPIClient) -> List[str]:
         """重载所有插件
-        
+
         Returns:
             List[str]: 成功重载的插件名称列表
         """
@@ -216,10 +231,10 @@ class PluginManager:
 
     def get_plugin_info(self, plugin_name: str = None) -> Union[dict, List[dict]]:
         """获取插件信息
-        
+
         Args:
             plugin_name: 插件名称，如果为None则返回所有插件信息
-            
+
         Returns:
             如果指定插件名，返回单个插件信息字典；否则返回所有插件信息列表
         """
@@ -231,17 +246,37 @@ class PluginManager:
                 "description": info.get("description", ""),
                 "author": info.get("author", ""),
                 "version": info.get("version", "1.0.0"),
-                "enabled": info.get("enabled", False)
+                "enabled": info.get("enabled", False),
+                "is_ai_platform": info.get("is_ai_platform", False)  # 添加AI平台标识
             }
             return result
-            
+
         if plugin_name:
             info = self.plugin_info.get(plugin_name)
             if info:
                 return clean_plugin_info(info)
             return None
-        
+
         return [clean_plugin_info(info) for info in self.plugin_info.values()]
+
+    def get_ai_platform_plugins(self) -> List[dict]:
+        """获取所有AI平台插件信息"""
+        # 使用与 get_plugin_info 相同的格式化方法
+        def clean_plugin_info(info):
+            result = {
+                "id": info.get("name", "unknown"),
+                "name": info.get("name", "unknown"),
+                "description": info.get("description", ""),
+                "author": info.get("author", ""),
+                "version": info.get("version", "1.0.0"),
+                "enabled": info.get("enabled", False),
+                "is_ai_platform": info.get("is_ai_platform", False)
+            }
+            return result
+
+        # 过滤出AI平台插件
+        return [clean_plugin_info(info) for info in self.plugin_info.values()
+                if info.get("is_ai_platform", False)]
 
 
 plugin_manager = PluginManager()

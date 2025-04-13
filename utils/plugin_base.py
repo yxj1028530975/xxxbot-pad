@@ -12,6 +12,7 @@ class PluginBase(ABC):
     description: str = "暂无描述"
     author: str = "未知"
     version: str = "1.0.0"
+    is_ai_platform: bool = False  # 标记是否为AI平台插件
 
     def __init__(self):
         self.enabled = False
@@ -35,7 +36,7 @@ class PluginBase(ABC):
 
     async def on_disable(self):
         """插件禁用时调用"""
-        
+
         # 移除定时任务
         for job_id in self._scheduled_jobs:
             remove_job_safe(scheduler, job_id)
