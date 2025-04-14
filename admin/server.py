@@ -4496,10 +4496,111 @@ except:
             logger.error(f"访问文件管理页面失败: {str(e)}")
             raise HTTPException(status_code=500, detail=f"服务器错误: {str(e)}")
 
+    # API: 系统日志下载 (需要认证)
+    @app.get("/api/system/logs/download", response_class=FileResponse)
+    async def api_system_logs_download(request: Request, t: str = None):
+        """下载系统日志文件"""
+        logger.info(f"接收到日志下载请求: {request.url}")
+
+        # 检查认证状态
+        try:
+            username = await check_auth(request)
+            if not username:
+                logger.warning("未认证用户尝试下载日志")
+                return JSONResponse(status_code=401, content={"success": False, "error": "未认证"})
+        except Exception as auth_err:
+            logger.error(f"认证检查失败: {str(auth_err)}")
+            return JSONResponse(status_code=401, content={"success": False, "error": "认证失败"})
+
+        try:
+            # 可能的日志文件位置
+            log_paths = [
+                "logs/latest.log",
+                "logs/xybot.log",
+                "logs/XYBot_*.log",
+                "_data/logs/XYBot_*.log",
+                "../logs/XYBot_*.log",
+                "./logs/XYBot_*.log",
+                # 相对于当前目录的位置
+                os.path.join(current_dir, "../logs/latest.log"),
+                os.path.join(current_dir, "../logs/xybot.log"),
+                os.path.join(current_dir, "../logs/XYBot_*.log"),
+                os.path.join(current_dir, "./logs/latest.log"),
+            ]
+
+            # 查找存在的日志文件
+            found_logs = []
+            for path_pattern in log_paths:
+                try:
+                    for log_file in glob.glob(path_pattern):
+                        if os.path.exists(log_file) and os.path.isfile(log_file):
+                            found_logs.append(log_file)
+                except Exception as glob_err:
+                    logger.error(f"查找日志文件失败 {path_pattern}: {str(glob_err)}")
+
+            # 记录找到的日志文件
+            logger.info(f"找到的日志文件: {found_logs}")
+
+            # 如果没找到日志文件
+            if not found_logs:
+                logger.warning("未找到任何日志文件")
+                return JSONResponse(
+                    status_code=404,
+                    content={
+                        "success": False,
+                        "error": "未找到任何日志文件"
+                    }
+                )
+
+            # 选择最新的日志文件
+            latest_log = max(found_logs, key=os.path.getmtime)
+            logger.info(f"准备下载日志文件: {latest_log}")
+
+            # 检查文件是否可读
+            if not os.access(latest_log, os.R_OK):
+                logger.error(f"文件没有读取权限: {latest_log}")
+                return JSONResponse(
+                    status_code=403,
+                    content={
+                        "success": False,
+                        "error": "没有文件读取权限"
+                    }
+                )
+
+            # 检查文件大小
+            file_size = os.path.getsize(latest_log)
+            logger.info(f"日志文件大小: {file_size} 字节")
+
+            # 返回文件响应
+            filename = os.path.basename(latest_log)
+            logger.info(f"开始下载日志文件: {filename}")
+
+            return FileResponse(
+                path=latest_log,
+                filename=filename,
+                media_type="text/plain"
+            )
+
+        except Exception as e:
+            logger.error(f"下载日志文件时出错: {str(e)}")
+            logger.error(traceback.format_exc())
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "success": False,
+                    "error": f"下载日志文件失败: {str(e)}"
+                }
+            )
+
     # API: 系统日志 (需要认证)
     @app.get("/api/system/logs", response_class=JSONResponse)
-    async def api_system_logs(request: Request, log_level: str = None, limit: int = 100):
-        """获取系统日志"""
+    async def api_system_logs(request: Request, log_level: str = None, limit: int = 0):
+        """获取系统日志
+
+        参数:
+            log_level: 日志级别过滤
+            limit: 返回的日志行数，0表示返回所有行
+        """
         # 检查认证状态
         username = await check_auth(request)
         if not username:
@@ -4542,14 +4643,18 @@ except:
             latest_log = max(found_logs, key=os.path.getmtime)
             logger.info(f"读取日志文件: {latest_log}")
 
-            # 读取日志文件并按行返回最新的limit行
+            # 读取日志文件并按行返回
             log_entries = []
             log_files = [os.path.basename(log) for log in found_logs]
 
             with open(latest_log, "r", encoding="utf-8", errors="ignore") as f:
                 lines = f.readlines()
-                # 获取最后的limit行
-                lines = lines[-limit:] if len(lines) > limit else lines
+                # 如果指定了limit并且大于0，则只获取最后的limit行
+                # 否则获取所有行
+                if limit > 0:
+                    lines = lines[-limit:]
+
+                logger.info(f"读取日志行数: {len(lines)}")
 
                 for line in lines:
                     line = line.strip()
@@ -4584,11 +4689,13 @@ except:
 
                     log_entries.append(log_entry)
 
+            # 添加日志文件路径，用于下载
             return {
                 "success": True,
                 "logs": log_entries,
                 "log_files": log_files,
-                "current_log": os.path.basename(latest_log)
+                "current_log": os.path.basename(latest_log),
+                "log_path": latest_log  # 添加日志文件路径
             }
 
         except Exception as e:
