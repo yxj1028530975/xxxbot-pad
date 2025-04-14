@@ -222,8 +222,8 @@ class PluginManager:
                 if module_name.startswith('plugins.') and not module_name.endswith('ManagePlugin'):
                     del sys.modules[module_name]
 
-            # 从目录重新加载插件
-            return await self.load_plugins_from_directory(bot)
+            # 从目录重新加载插件，不加载禁用的插件
+            return await self.load_plugins_from_directory(bot, load_disabled_plugin=False)
 
         except:
             logger.error(f"重载所有插件时发生错误: {traceback.format_exc()}")

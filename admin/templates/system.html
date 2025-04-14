@@ -422,15 +422,15 @@
                                     <option value="admin">管理后台日志</option>
                                     <option value="api">API日志</option>
                                 </select>
-                                <span class="text-muted small ms-2 align-self-center" id="last-log-update"></span>
+                                <span class="text-muted small ms-2 align-self-center" id="last-log-update" style="white-space: nowrap;"></span>
                             </div>
                             <div>
                                 <button class="btn btn-sm btn-outline-secondary me-2" id="btn-copy-logs">
                                     <i class="bi bi-clipboard me-1"></i>复制
                                 </button>
-                                <button class="btn btn-sm btn-outline-secondary" id="btn-download-logs">
+                                <a href="/api/system/logs/download" class="btn btn-sm btn-outline-secondary" id="btn-download-logs" download target="_blank">
                                     <i class="bi bi-download me-1"></i>下载
-                                </button>
+                                </a>
                             </div>
                         </div>
 
@@ -796,8 +796,8 @@
                     // 更新日志文件下拉菜单
                     updateLogFileSelect(data.log_files || [], data.current_log || '');
 
-                    // 更新最后更新时间
-                    document.getElementById('last-log-update').textContent = new Date().toLocaleTimeString();
+                    // 更新最后更新时间和行数
+                    document.getElementById('last-log-update').textContent = `更新于 ${new Date().toLocaleTimeString()} | 共 ${data.logs.length} 行`;
                 })
                 .catch(error => {
                     console.error('获取日志失败:', error);
@@ -816,20 +816,32 @@
             // 清空选项
             logFileSelect.innerHTML = '';
 
+            // 添加默认选项
+            const defaultOption = document.createElement('option');
+            defaultOption.value = 'latest';
+            defaultOption.textContent = '最新日志';
+            defaultOption.selected = (currentSelected === 'latest' || !currentSelected);
+            logFileSelect.appendChild(defaultOption);
+
             // 添加找到的日志文件
-            logFiles.forEach(file => {
-                const option = document.createElement('option');
-                option.value = file;
-                option.textContent = file;
-                option.selected = (file === currentLog || file === currentSelected);
-                logFileSelect.appendChild(option);
-            });
+            if (Array.isArray(logFiles) && logFiles.length > 0) {
+                logFiles.forEach(file => {
+                    if (!file) return; // 跳过空值
+
+                    const option = document.createElement('option');
+                    option.value = file;
+                    option.textContent = file;
+                    option.selected = (file === currentLog || file === currentSelected);
+                    logFileSelect.appendChild(option);
+                });
+            }
 
             // 如果没有选项，添加一个默认的
-            if (logFiles.length === 0) {
+            if (logFileSelect.options.length <= 1) {
                 const option = document.createElement('option');
                 option.value = '';
-                option.textContent = '-- 无可用日志 --';
+                option.textContent = '-- 无其他日志 --';
+                option.disabled = true;
                 logFileSelect.appendChild(option);
             }
         }
@@ -1031,6 +1043,11 @@
             getSystemLogs();
         });
 
+        // 刷新日志按钮
+        document.getElementById('btn-refresh-logs').addEventListener('click', function() {
+            getSystemLogs();
+        });
+
         // 复制日志
         document.getElementById('btn-copy-logs').addEventListener('click', function() {
             const logContent = document.getElementById('log-viewer').innerText;
@@ -1044,19 +1061,7 @@
                 });
         });
 
-        // 下载日志
-        document.getElementById('btn-download-logs').addEventListener('click', function() {
-            const logContent = document.getElementById('log-viewer').innerText;
-            const blob = new Blob([logContent], { type: 'text/plain' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = 'system_log_' + new Date().toISOString().replace(/:/g, '-') + '.txt';
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-        });
+        // 下载日志功能现在通过直接链接实现
 
         function formatBytes(bytes) {
             if (!bytes || bytes <= 0) return '未知';
@@ -1213,6 +1218,9 @@
 
         // 初始化时更新进度条
         updateAllProgressBars();
+
+        // 初始化时加载日志
+        getSystemLogs();
 
         // 定期更新进度条
         setInterval(updateAllProgressBars, 30000);
