@@ -1,5 +1,6 @@
-[SiliconFlowAPI]
+[SiliconFlow]
 enable = true                           # 是否启用此功能
+handle_all_messages = false               # 是否处理所有消息（不需要命令前缀）
 api-key = ""                            # 硅基流动API密钥，必填
 base-url = "https://api.siliconflow.cn/v1"  # 硅基流动API地址
 
@@ -15,20 +16,8 @@ available-models = [                    # 可用模型列表
     "deepseek-ai/DeepSeek-R1"
 ]
 
-# 插件配置
-port = 8200                             # API服务端口
-host = "0.0.0.0"                        # API服务主机
-command-tip = """-----硅基流动 API-----
-💬硅基流动 API 服务已启动
-访问地址: http://你的IP:8200
-支持标准硅基流动 API 格式
-可用于接入各种支持硅基流动 API 的应用
-"""
-
-# 积分系统
-price = 0                               # 每次使用扣除的积分，0表示不扣除
-admin_ignore = true                     # 管理员是否忽略积分扣除
-whitelist_ignore = true                 # 白名单用户是否忽略积分扣除
+# 命令配置
+commands = ["硅基", "sf", "SiliconFlow"]  # 触发插件的命令
 
 # Http代理设置
 # 格式: http://用户名:密码@代理地址:代理端口

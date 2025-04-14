@@ -32,7 +32,7 @@ msgDB-url = "sqlite+aiosqlite:///database/message.db"
 keyvalDB-url = "sqlite+aiosqlite:///database/keyval.db"
 
 # 管理员设置
-admins = ["xianan96928", "wxid_lnbsshdobq7y22"]  # 管理员的wxid列表，可从消息日志中获取
+admins = []  # 管理员的wxid列表，可从消息日志中获取
 disabled-plugins = ["ExamplePlugin", "TencentLke","FastGPT","OpenAIAPI","SiliconFlowAPI"]   # 禁用的插件列表，不需要的插件名称填在这里
 timezone = "Asia/Shanghai"             # 时区设置，中国用户使用 Asia/Shanghai
 
@@ -46,15 +46,9 @@ ignore-mode = "None"            # 消息处理模式：
 # "Blacklist" - 屏蔽黑名单消息
 
 whitelist = [# 白名单列表
-    "xianan96928", # 个人用户微信ID
-    "wxid_lnbsshdobq7y22",
-    "47325400669@chatroom", # 群聊ID
-    "20757697988@chatroom"
+    # 在此添加个人用户微信ID或群聊ID
 ]
 
 blacklist = [# 黑名单列表
-    "wxid_3", # 个人用户微信ID
-    "wxid_4",
-    "333@chatroom", # 群聊ID
-    "444@chatroom"
+    # 在此添加个人用户微信ID或群聊ID
 ]
