@@ -111,6 +111,23 @@ active_connections: List[WebSocket] = []
 SERVER_RUNNING = False
 SERVER_THREAD = None
 
+# 全局变量，用于存储bot实例
+bot_instance = None
+
+def set_bot_instance(bot):
+    """设置bot实例供其他模块使用"""
+    global bot_instance
+    bot_instance = bot
+    logger.info("管理后台已设置bot实例")
+    return bot_instance
+
+def get_bot_instance():
+    """获取bot实例"""
+    global bot_instance
+    if bot_instance is None:
+        logger.warning("bot实例未设置")
+    return bot_instance
+
 # 加载配置
 def load_config():
     global config
@@ -1006,6 +1023,48 @@ def setup_routes():
         import traceback
         logger.error(traceback.format_exc())
 
+    # 添加朋友圈页面路由
+    @app.get("/friend_circle", response_class=HTMLResponse)
+    async def friend_circle_page(request: Request):
+        """朋友圈页面"""
+        # 检查认证状态
+        try:
+            username = await check_auth(request)
+            if not username:
+                # 未认证，重定向到登录页面
+                return RedirectResponse(url="/login?next=/friend_circle", status_code=303)
+
+            logger.debug(f"用户 {username} 访问朋友圈页面")
+
+            # 获取bot实例的wxid
+            bot_wxid = ""
+            if bot_instance and hasattr(bot_instance, "wxid"):
+                bot_wxid = bot_instance.wxid
+                logger.debug(f"当前机器人 wxid: {bot_wxid}")
+
+            # 获取版本信息
+            version_info = get_version_info()
+            version = version_info.get("version", "1.0.0")
+            update_available = version_info.get("update_available", False)
+            latest_version = version_info.get("latest_version", "")
+            update_url = version_info.get("update_url", "")
+            update_description = version_info.get("update_description", "")
+
+            # 认证成功，显示朋友圈页面
+            return templates.TemplateResponse("friend_circle.html", {
+                "request": request,
+                "active_page": "friend_circle",
+                "bot_wxid": bot_wxid,
+                "version": version,
+                "update_available": update_available,
+                "latest_version": latest_version,
+                "update_url": update_url,
+                "update_description": update_description
+            })
+        except Exception as e:
+            logger.error(f"朋友圈页面访问失败: {str(e)}")
+            return RedirectResponse(url="/login?next=/friend_circle", status_code=303)
+
     # 导入并注册切换账号相关路由
     try:
         # 使用绝对导入
@@ -1019,25 +1078,39 @@ def setup_routes():
         from system_config_api import router as system_config_router
         app.include_router(system_config_router)
         logger.info("系统配置API路由注册成功")
+    except Exception as e:
+        logger.error(f"注册切换账号和系统配置API路由失败: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
 
-        # 直接添加朋友圈页面路由
-        @app.get("/friend_circle", response_class=HTMLResponse)
-        async def friend_circle_page(request: Request):
-            """朋友圈页面"""
+    # 导入并注册重启系统路由
+    try:
+        from restart_api import register_restart_routes, restart_system
+        register_restart_routes(app, check_auth)
+        logger.info("重启系统API路由注册成功")
+    except Exception as e:
+        logger.error(f"注册重启系统API路由失败: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+
+    # 导入并注册账号管理路由
+    try:
+        from account_manager import register_account_manager_routes
+        register_account_manager_routes(app, check_auth, update_bot_status, restart_system)
+        logger.info("账号管理API路由注册成功")
+
+        # 添加账号管理页面路由
+        @app.get("/accounts", response_class=HTMLResponse)
+        async def accounts_page(request: Request):
+            """账号管理页面"""
             # 检查认证状态
             try:
                 username = await check_auth(request)
                 if not username:
                     # 未认证，重定向到登录页面
-                    return RedirectResponse(url="/login?next=/friend_circle", status_code=303)
+                    return RedirectResponse(url="/login?next=/accounts", status_code=303)
 
-                logger.debug(f"用户 {username} 访问朋友圈页面")
-
-                # 获取bot实例的wxid
-                bot_wxid = ""
-                if bot_instance and hasattr(bot_instance, "wxid"):
-                    bot_wxid = bot_instance.wxid
-                    logger.debug(f"当前机器人 wxid: {bot_wxid}")
+                logger.debug(f"用户 {username} 访问账号管理页面")
 
                 # 获取版本信息
                 version_info = get_version_info()
@@ -1047,11 +1120,10 @@ def setup_routes():
                 update_url = version_info.get("update_url", "")
                 update_description = version_info.get("update_description", "")
 
-                # 认证成功，显示朋友圈页面
-                return templates.TemplateResponse("friend_circle.html", {
+                # 认证成功，显示账号管理页面
+                return templates.TemplateResponse("accounts.html", {
                     "request": request,
-                    "active_page": "friend_circle",
-                    "bot_wxid": bot_wxid,
+                    "active_page": "accounts",
                     "version": version,
                     "update_available": update_available,
                     "latest_version": latest_version,
@@ -1059,175 +1131,14 @@ def setup_routes():
                     "update_description": update_description
                 })
             except Exception as e:
-                logger.error(f"访问朋友圈页面失败: {str(e)}")
-                raise HTTPException(status_code=500, detail=f"朋友圈页面加载失败: {str(e)}")
+                logger.error(f"账号管理页面访问失败: {str(e)}")
+                return RedirectResponse(url="/login?next=/accounts", status_code=303)
     except Exception as e:
-        logger.error(f"注册朋友圈API路由失败: {str(e)}")
+        logger.error(f"注册账号管理API路由失败: {str(e)}")
         import traceback
         logger.error(traceback.format_exc())
 
-    # API: 重启容器
-    @app.post("/api/system/restart", response_class=JSONResponse)
-    async def api_restart_container(request: Request):
-        """重启容器API"""
-        # 检查认证状态
-        try:
-            username = await check_auth(request)
-            if not username:
-                return JSONResponse(status_code=401, content={"success": False, "error": "未认证"})
-        except Exception as e:
-            logger.error(f"认证检查失败: {str(e)}")
-            return JSONResponse(status_code=401, content={"success": False, "error": "认证失败"})
-
-        try:
-            logger.info(f"用户 {username} 请求重启容器")
-
-            # 创建一个后台任务来执行重启
-            async def restart_task():
-                # 在函数内部导入所需模块，避免作用域问题
-                import os
-                import sys
-                import asyncio
-                import subprocess
-                from pathlib import Path
-
-                # 等待1秒让响应先返回
-                await asyncio.sleep(1)
-                logger.warning("正在重启容器...")
-
-                # 检测是否在Docker容器中运行
-                in_docker = os.path.exists('/.dockerenv') or os.path.exists('/app/.dockerenv')
-                logger.info(f"是否在Docker环境中: {in_docker}")
-
-                if in_docker:
-                    # Docker环境下的重启策略
-                    logger.info("在Docker环境中运行，使用Docker特定的重启方法")
-
-                    # 方法1: 尝试向自己发送SIGTERM信号，让Docker重启策略生效
-                    try:
-                        import signal
-                        logger.info("尝试向PID 1发送SIGTERM信号")
-                        os.kill(1, signal.SIGTERM)
-                        # 等待信号生效
-                        await asyncio.sleep(5)
-                    except Exception as e:
-                        logger.error(f"发送SIGTERM失败: {e}")
-
-                    # 方法2: 尝试使用docker命令重启当前容器
-                    try:
-                        # 获取当前容器ID
-                        container_id = subprocess.check_output(["cat", "/proc/self/cgroup"]).decode('utf-8')
-                        if 'docker' in container_id:
-                            # 提取容器ID
-                            for line in container_id.splitlines():
-                                if 'docker' in line:
-                                    parts = line.split('/')
-                                    if len(parts) > 2:
-                                        container_id = parts[-1]
-                                        logger.info(f"检测到容器ID: {container_id}")
-                                        # 尝试使用docker命令重启
-                                        cmd = f"docker restart {container_id}"
-                                        logger.info(f"执行命令: {cmd}")
-                                        # 使用一个简单的Shell脚本来执行docker命令
-                                        restart_cmd = f"sleep 2 && {cmd} &"
-                                        subprocess.Popen(["sh", "-c", restart_cmd])
-                                        break
-                    except Exception as e:
-                        logger.error(f"使用docker命令重启失败: {e}")
-
-                    # 方法3: 最后的方法，直接退出进程，依靠Docker的自动重启策略
-                    logger.info("使用最后的方法: 直接退出进程")
-                    os._exit(1)  # 使用非零退出码，通常会触发Docker的重启策略
-
-                else:
-                    # 非Docker环境下的重启策略
-                    # 获取当前脚本的路径和执行命令
-                    current_file = os.path.abspath(__file__)
-                    parent_dir = os.path.dirname(current_file)
-                    run_server_path = os.path.join(parent_dir, "run_server.py")
-
-                    # 确定Python解释器路径
-                    python_executable = sys.executable or "python"
-
-                    # 获取当前工作目录
-                    cwd = os.getcwd()
-
-                    # 创建一个重启脚本，保证在当前进程结束后仍能启动新进程
-                    restart_script = os.path.join(parent_dir, "restart_helper.py")
-
-                    logger.info(f"创建重启辅助脚本: {restart_script}")
-                    try:
-                        with open(restart_script, 'w') as f:
-                            f.write(f"""#!/usr/bin/env python
-import os
-import sys
-import time
-import subprocess
-
-# 等待原进程结束
-time.sleep(2)
-
-# 重启服务器
-cmd = ["{python_executable}", "{run_server_path}"]
-print("执行重启命令:", " ".join(cmd))
-subprocess.Popen(cmd, cwd="{cwd}", shell=False)
-
-# 删除自身
-try:
-    os.remove(__file__)
-except:
-    pass
-""")
-                    except Exception as e:
-                        logger.error(f"创建重启脚本失败: {e}")
-                        return
-
-                    # 使脚本可执行
-                    try:
-                        os.chmod(restart_script, 0o755)
-                    except Exception as e:
-                        logger.warning(f"设置重启脚本权限失败: {e}")
-
-                    # 启动重启脚本
-                    logger.info(f"启动重启脚本: {restart_script}")
-                    try:
-                        if sys.platform.startswith('win'):
-                            # Windows
-                            subprocess.Popen([python_executable, restart_script],
-                                            creationflags=subprocess.DETACHED_PROCESS)
-                        else:
-                            # Linux/Unix
-                            subprocess.Popen([python_executable, restart_script],
-                                            start_new_session=True)
-                    except Exception as e:
-                        logger.error(f"启动重启脚本失败: {e}")
-                        return
-
-                # 等待一点时间让重启脚本启动
-                await asyncio.sleep(1)
-
-                # 结束当前进程
-                logger.info("正在关闭当前进程...")
-                try:
-                    os._exit(0)
-                except Exception as e:
-                    logger.error(f"关闭进程失败: {e}")
-                    sys.exit(0)
-
-            # 启动后台任务
-            asyncio.create_task(restart_task())
-
-            # 使用明确的JSONResponse返回
-            return JSONResponse(content={
-                "success": True,
-                "message": "容器正在重启，页面将在几秒后自动刷新..."
-            })
-        except Exception as e:
-            logger.error(f"重启容器失败: {str(e)}")
-            return JSONResponse(content={
-                "success": False,
-                "error": f"重启容器失败: {str(e)}"
-            })
+    # API: 重启容器 - 已移至restart_api.py
 
     # 用户登录API
     @app.post("/api/auth/login", response_class=JSONResponse)
@@ -5507,18 +5418,94 @@ except:
             }
         )
 
+# 账号管理页面路由 - 直接在模块顶层定义，确保路由被正确注册
+@app.get("/accounts", response_class=HTMLResponse)
+async def accounts_page(request: Request):
+    """账号管理页面"""
+    # 检查认证状态
+    try:
+        # 从 Cookie 中获取会话数据
+        session_cookie = request.cookies.get("session")
+        if not session_cookie:
+            logger.debug("未找到会话 Cookie")
+            return RedirectResponse(url="/login?next=/accounts", status_code=303)
+
+        # 解码会话数据
+        try:
+            serializer = URLSafeSerializer(config["secret_key"], "session")
+            session_data = serializer.loads(session_cookie)
+
+            # 检查会话是否已过期
+            expires = session_data.get("expires", 0)
+            if expires < time.time():
+                logger.debug(f"会话已过期: 当前时间 {time.time()}, 过期时间 {expires}")
+                return RedirectResponse(url="/login?next=/accounts", status_code=303)
+
+            # 会话有效
+            username = session_data.get("username")
+            logger.debug(f"用户 {username} 访问账号管理页面")
+
+            # 获取版本信息
+            version_info = get_version_info()
+            version = version_info.get("version", "1.0.0")
+            update_available = version_info.get("update_available", False)
+            latest_version = version_info.get("latest_version", "")
+            update_url = version_info.get("update_url", "")
+            update_description = version_info.get("update_description", "")
+
+            # 返回账号管理页面
+            return templates.TemplateResponse("accounts.html", {
+                "request": request,
+                "active_page": "accounts",
+                "version": version,
+                "update_available": update_available,
+                "latest_version": latest_version,
+                "update_url": update_url,
+                "update_description": update_description
+            })
+        except Exception as e:
+            logger.error(f"解析会话数据失败: {str(e)}")
+            return RedirectResponse(url="/login?next=/accounts", status_code=303)
+    except Exception as e:
+        logger.error(f"账号管理页面访问失败: {str(e)}")
+        return RedirectResponse(url="/login?next=/accounts", status_code=303)
+
 # 添加一个简化的文件上传API - 直接在模块顶层定义，确保路由被正确注册
 @app.post("/upload")
 async def simple_upload(request: Request, files: List[UploadFile] = File(...)):
     """简化的文件上传API，直接保存到项目的files目录"""
     try:
-        # 检查认证状态
-        username = await check_auth(request)
-        if not username:
-            logger.warning("简化上传API访问失败：未认证")
+        # 从 Cookie 中获取会话数据
+        session_cookie = request.cookies.get("session")
+        if not session_cookie:
+            logger.debug("未找到会话 Cookie")
             return JSONResponse(status_code=401, content={
                 'success': False,
                 'message': '未认证，请先登录'
+            })
+
+        # 解码会话数据
+        try:
+            serializer = URLSafeSerializer(config["secret_key"], "session")
+            session_data = serializer.loads(session_cookie)
+
+            # 检查会话是否已过期
+            expires = session_data.get("expires", 0)
+            if expires < time.time():
+                logger.debug(f"会话已过期: 当前时间 {time.time()}, 过期时间 {expires}")
+                return JSONResponse(status_code=401, content={
+                    'success': False,
+                    'message': '会话已过期，请重新登录'
+                })
+
+            # 会话有效
+            username = session_data.get("username")
+            logger.debug(f"用户 {username} 访问文件上传API")
+        except Exception as e:
+            logger.error(f"解析会话数据失败: {str(e)}")
+            return JSONResponse(status_code=401, content={
+                'success': False,
+                'message': '会话解析失败，请重新登录'
             })
 
         # 使用固定的上传目录 - 项目根目录下的files文件夹
@@ -7102,4 +7089,3 @@ def get_bot(wxid):
             return JSONResponse(content={"success": False, "error": f"删除提醒失败: {str(e)}"})
 
     # API: 切换微信账号已移动到 switch_account_api.py 文件中
-

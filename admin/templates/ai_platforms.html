@@ -623,10 +623,6 @@
                         // 创建文本编辑器
                         const formContainer = document.getElementById('plugin-config-form');
                         formContainer.innerHTML = `
-                            <div class="alert alert-info mb-3">
-                                <i class="bi bi-info-circle-fill me-2"></i>
-                                正在编辑: ${data.config_file}
-                            </div>
                             <div class="mb-3">
                                 <textarea id="config-editor" class="form-control" style="min-height: 300px; font-family: monospace;">${contentData.content}</textarea>
                             </div>

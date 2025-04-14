@@ -178,16 +178,22 @@
                     </a>
                 </li>
                 <li class="nav-item">
-                    <a href="/system" class="nav-link {% if request.path == '/system' %}active{% endif %}">
-                        <i class="bi bi-gear"></i>
-                        <span>系统状态</span>
-                    </a>
-                </li>
-                <li class="nav-item">
                     <a href="/ai-platforms" class="nav-link {% if request.path == '/ai-platforms' %}active{% endif %}">
                         <i class="bi bi-robot"></i>
                         <span>AI平台管理</span>
                     </a>
+                </li>
+                <li class="nav-item">
+                    <a href="/accounts" class="nav-link {% if request.path == '/accounts' %}active{% endif %}">
+                        <i class="bi bi-person-badge"></i>
+                        <span>账号管理</span>                        
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a href="/system" class="nav-link {% if request.path == '/system' %}active{% endif %}">
+                        <i class="bi bi-gear"></i>
+                        <span>系统状态</span>
+                    </a>                    
                 </li>
                 <li class="nav-item mt-4">
                     <a href="/qrcode" class="nav-link special-link">
