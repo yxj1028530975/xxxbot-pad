@@ -1,4 +1,5 @@
 import asyncio
+import aiohttp
 import json
 import os
 import sys
@@ -235,10 +236,101 @@ async def bot_core():
                     if not twice:
                         logger.error("二次登录失败，请检查微信是否在运行中，或重新启动机器人")
                         # 尝试唤醒登录
-                        uuid = await bot.awaken_login(wxid)
-                        logger.success("获取到登录uuid: {}", uuid)
-                        # 更新状态，记录UUID但没有二维码
-                        update_bot_status("waiting_login", f"等待微信登录 (UUID: {uuid})")
+                        logger.info("尝试唤醒登录...")
+                        try:
+                            # 准备唤醒登录
+                            # 注意：awaken_login 方法只接受 wxid 参数
+                            # 实际的 API 调用会将其作为 JSON 请求体中的 Wxid 字段发送
+
+                            # 直接使用 aiohttp 调用 API，而不是使用 awaken_login 方法
+                            # 这样我们可以更好地控制错误处理
+                            async with aiohttp.ClientSession() as session:
+                                # 根据协议版本选择不同的 API 路径
+                                api_base = "/api" if protocol_version == "855" else "/VXAPI"
+                                api_url = f'http://127.0.0.1:{api_config.get("port", 9000)}{api_base}/Login/Awaken'
+
+                                # 准备请求参数
+                                json_param = {
+                                    "OS": device_name if device_name else "iPad",
+                                    "Proxy": {
+                                        "ProxyIp": "",
+                                        "ProxyPassword": "",
+                                        "ProxyUser": ""
+                                    },
+                                    "Url": "",
+                                    "Wxid": wxid
+                                }
+
+                                logger.debug(f"发送唤醒登录请求到 {api_url} 参数: {json_param}")
+
+                                try:
+                                    # 发送请求
+                                    response = await session.post(api_url, json=json_param)
+
+                                    # 检查响应状态码
+                                    if response.status != 200:
+                                        logger.error(f"唤醒登录请求失败，状态码: {response.status}")
+                                        raise Exception(f"服务器返回状态码 {response.status}")
+
+                                    # 解析响应内容
+                                    json_resp = await response.json()
+                                    logger.debug(f"唤醒登录响应: {json_resp}")
+
+                                    # 检查是否成功
+                                    if json_resp and json_resp.get("Success"):
+                                        # 尝试获取 UUID
+                                        data = json_resp.get("Data", {})
+                                        qr_response = data.get("QrCodeResponse", {}) if data else {}
+                                        uuid = qr_response.get("Uuid", "") if qr_response else ""
+
+                                        if uuid:
+                                            logger.success(f"唤醒登录成功，获取到登录uuid: {uuid}")
+                                            # 更新状态，记录UUID但没有二维码
+                                            update_bot_status("waiting_login", f"等待微信登录 (UUID: {uuid})")
+                                        else:
+                                            logger.error("唤醒登录响应中没有有效的UUID")
+                                            raise Exception("响应中没有有效的UUID")
+                                    else:
+                                        # 如果请求不成功，获取错误信息
+                                        error_msg = json_resp.get("Message", "未知错误") if json_resp else "未知错误"
+                                        logger.error(f"唤醒登录失败: {error_msg}")
+                                        raise Exception(error_msg)
+
+                                except Exception as e:
+                                    logger.error(f"唤醒登录过程中出错: {e}")
+                                    logger.error("将尝试二维码登录")
+                                # 如果唤醒登录失败，回退到二维码登录
+                                if not device_name:
+                                    device_name = bot.create_device_name()
+                                if not device_id:
+                                    device_id = bot.create_device_id()
+                                uuid, url = await bot.get_qr_code(device_id=device_id, device_name=device_name, print_qr=True)
+                                logger.success("获取到登录uuid: {}", uuid)
+                                logger.success("获取到登录二维码: {}", url)
+                                # 更新状态，记录二维码URL
+                                update_bot_status("waiting_login", "等待微信扫码登录", {
+                                    "qrcode_url": url,
+                                    "uuid": uuid,
+                                    "expires_in": 240, # 默认240秒过期
+                                    "timestamp": time.time()
+                                })
+                        except Exception as e:
+                            logger.error("唤醒登录失败: {}", e)
+                            # 如果唤醒登录出错，回退到二维码登录
+                            if not device_name:
+                                device_name = bot.create_device_name()
+                            if not device_id:
+                                device_id = bot.create_device_id()
+                            uuid, url = await bot.get_qr_code(device_id=device_id, device_name=device_name, print_qr=True)
+                            logger.success("获取到登录uuid: {}", uuid)
+                            logger.success("获取到登录二维码: {}", url)
+                            # 更新状态，记录二维码URL
+                            update_bot_status("waiting_login", "等待微信扫码登录", {
+                                "qrcode_url": url,
+                                "uuid": uuid,
+                                "expires_in": 240, # 默认240秒过期
+                                "timestamp": time.time()
+                            })
 
                 else:
                     # 二维码登录
@@ -426,6 +518,14 @@ async def bot_core():
 
     # 更新状态为就绪
     update_bot_status("ready", "机器人已准备就绪")
+
+    # 启动自动重启监控器
+    try:
+        from utils.auto_restart import start_auto_restart_monitor
+        start_auto_restart_monitor()
+        logger.success("自动重启监控器已启动")
+    except Exception as e:
+        logger.error(f"启动自动重启监控器失败: {e}")
 
     logger.success("开始处理消息")
     while True:
