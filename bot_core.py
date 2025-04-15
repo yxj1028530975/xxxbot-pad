@@ -138,8 +138,44 @@ async def bot_core():
     #              redis_password=api_config.get("redis-password", ""),
     #              redis_db=api_config.get("redis-db", 0))
 
+    # 读取协议版本设置
+    protocol_version = config.get("Protocol", {}).get("version", "849")
+    logger.info(f"使用协议版本: {protocol_version}")
+
     # 实例化WechatAPI客户端
-    bot = WechatAPI.WechatAPIClient("127.0.0.1", api_config.get("port", 9000))
+    if protocol_version == "855":
+        # 855版本使用Client2
+        try:
+            # 尝试导入Client2
+            import sys
+            import importlib.util
+            client2_path = Path(__file__).resolve().parent / "WechatAPI" / "Client2"
+            if str(client2_path) not in sys.path:
+                sys.path.append(str(client2_path))
+
+            # 检查Client2是否存在
+            if (client2_path / "__init__.py").exists():
+                logger.info("WechatAPI Client2目录存在，使用855协议客户端")
+                # 尝试导入客户端2
+                # 使用直接导入的方式
+                from WechatAPI.Client2 import WechatAPIClient as WechatAPIClient2
+
+                # 使用Client2
+                bot = WechatAPIClient2("127.0.0.1", api_config.get("port", 9000))
+                logger.success("成功加载855协议客户端")
+            else:
+                logger.warning("WechatAPI Client2目录不存在，回退使用默认客户端")
+                bot = WechatAPI.WechatAPIClient("127.0.0.1", api_config.get("port", 9000))
+        except Exception as e:
+            logger.error(f"加载855协议客户端失败: {e}")
+            logger.warning("回退使用默认客户端")
+            bot = WechatAPI.WechatAPIClient("127.0.0.1", api_config.get("port", 9000))
+    else:
+        # 849版本使用默认Client
+        bot = WechatAPI.WechatAPIClient("127.0.0.1", api_config.get("port", 9000))
+        logger.info("使用849协议客户端")
+
+    # 设置客户端属性
     bot.ignore_protect = config.get("XYBot", {}).get("ignore-protection", False)
 
     # 等待WechatAPI服务启动

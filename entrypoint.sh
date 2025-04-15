@@ -62,14 +62,54 @@ sleep 3
 # 注释: 不再单独启动管理后台服务器，由main.py统一管理
 # 管理后台将由main.py自动启动，使用main_config.toml中配置的端口
 
+# 读取协议版本配置
+echo "读取协议版本配置..."
+PROTOCOL_VERSION="849"  # 默认使用849协议
+
+# 检查配置文件是否存在
+if [ -f "/app/main_config.toml" ]; then
+    # 直接使用awk提取Protocol部分中的version值
+    # 这种方法更可靠，可以准确地提取配置值
+    EXTRACTED_VERSION=$(awk '/\[Protocol\]/{flag=1; next} /\[/{flag=0} flag && /version *=/{gsub(/[^0-9]/, "", $3); print $3}' /app/main_config.toml)
+
+    if [ ! -z "$EXTRACTED_VERSION" ]; then
+        PROTOCOL_VERSION="$EXTRACTED_VERSION"
+        echo "从配置文件中提取到协议版本: $PROTOCOL_VERSION"
+    else
+        echo "未从配置文件中提取到协议版本，使用默认值: $PROTOCOL_VERSION"
+    fi
+fi
+
+# 打印协议版本信息，包括字符长度和十六进制表示
+echo "使用协议版本: '$PROTOCOL_VERSION'"
+echo "协议版本字符长度: ${#PROTOCOL_VERSION}"
+echo "协议版本十六进制表示: $(echo -n "$PROTOCOL_VERSION" | hexdump -C)"
+
+# 清理可能的空格和不可见字符
+CLEAN_VERSION=$(echo "$PROTOCOL_VERSION" | tr -d '[:space:]')
+echo "清理后的协议版本: '$CLEAN_VERSION'"
+
 # 启动pad服务
 echo "启动pad服务..."
-if [ -f "/app/849/pad/linuxService" ]; then
+
+# 根据协议版本选择不同的服务路径
+# 使用更严格的比较方式
+if [[ "$CLEAN_VERSION" == "855" ]]; then
+    # 855版本使用pad2目录
+    PAD_SERVICE_PATH="/app/849/pad2/linuxService"
+    echo "使用855协议服务路径: $PAD_SERVICE_PATH"
+else
+    # 849版本使用pad目录
+    PAD_SERVICE_PATH="/app/849/pad/linuxService"
+    echo "使用849协议服务路径: $PAD_SERVICE_PATH"
+fi
+
+if [ -f "$PAD_SERVICE_PATH" ]; then
     # 在Linux系统上确保文件有执行权限
-    chmod +x /app/849/pad/linuxService
+    chmod +x "$PAD_SERVICE_PATH"
 
     # 使用nohup在后台启动linuxService
-    nohup /app/849/pad/linuxService > /app/logs/pad_service.log 2>&1 &
+    nohup "$PAD_SERVICE_PATH" > /app/logs/pad_service.log 2>&1 &
 
     # 记录进程号
     PAD_PID=$!
@@ -80,14 +120,14 @@ if [ -f "/app/849/pad/linuxService" ]; then
     # 等待短暂停，给pad服务一些初始化时间
     sleep 2
 
-    # 尝试最多2次，每次间隔短一些
-    for i in {1..2}; do
+    # 尝试最多5次，每次间隔短一些
+    for i in {1..5}; do
         if curl -s http://127.0.0.1:9011 > /dev/null 2>&1 || curl -s http://127.0.0.1:9011/VXAPI/Login/GetQR > /dev/null 2>&1; then
             echo "pad服务已启动并可用"
             break
         else
-            if [ $i -lt 2 ]; then
-                echo "等待pad服务启动，尝试 $i/2..."
+            if [ $i -lt 5 ]; then
+                echo "等待pad服务启动，尝试 $i/5..."
                 sleep 1
             else
                 echo "警告：pad服务可能未完全启动，继续启动主应用..."
@@ -95,7 +135,7 @@ if [ -f "/app/849/pad/linuxService" ]; then
         fi
     done
 else
-    echo "警告：pad服务文件不存在: /app/849/pad/linuxService"
+    echo "警告：pad服务文件不存在: $PAD_SERVICE_PATH"
 fi
 
 # 启动主应用

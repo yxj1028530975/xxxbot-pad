@@ -139,6 +139,7 @@ XXXBot 提供了多种装饰器来处理不同类型的消息：
 | `@on_image_message` | 处理图片消息   | `priority`: 优先级（默认 0） |
 | `@on_video_message` | 处理视频消息   | `priority`: 优先级（默认 0） |
 | `@on_file_message`  | 处理文件消息   | `priority`: 优先级（默认 0） |
+| `@on_xml_message`   | 处理 XML 消息  | `priority`: 优先级（默认 0） |
 | `@on_quote_message` | 处理引用消息   | `priority`: 优先级（默认 0） |
 | `@on_pat_message`   | 处理拍一拍消息 | `priority`: 优先级（默认 0） |
 | `@on_emoji_message` | 处理表情消息   | `priority`: 优先级（默认 0） |
@@ -473,14 +474,81 @@ await bot.sync_message(scene=0)  # scene=0 同步消息，scene=1 同步摘要�
 
 ### 工具相关 API
 
-| API 路径               | 功能描述 | 主要参数                             |
-| ---------------------- | -------- | ------------------------------------ |
-| `/Tools/DownloadImg`   | 下载图片 | `Wxid`, `ToWxid`, `MsgId`, `DataLen` |
-| `/Tools/DownloadVideo` | 下载视频 | `Wxid`, `ToWxid`, `MsgId`, `DataLen` |
-| `/Tools/DownloadVoice` | 下载语音 | `Wxid`, `MsgId`, `Length`            |
-| `/Tools/DownloadFile`  | 下载文件 | `Wxid`, `DataLen`, `AttachId`        |
-| `/Tools/EmojiDownload` | 下载表情 | `Wxid`, `Md5`                        |
-| `/Tools/UploadFile`    | 上传文件 | `Wxid`, `Base64`                     |
+| API 路径               | 功能描述 | 主要参数                                 |
+| ---------------------- | -------- | ---------------------------------------- |
+| `/Tools/DownloadImg`   | 下载图片 | `Wxid`, `ToWxid`, `MsgId`, `DataLen`     |
+| `/Tools/DownloadVideo` | 下载视频 | `Wxid`, `ToWxid`, `MsgId`, `DataLen`     |
+| `/Tools/DownloadVoice` | 下载语音 | `Wxid`, `MsgId`, `Length`                |
+| `/Tools/DownloadFile`  | 下载文件 | `Wxid`, `DataLen`, `AttachId`, `Section` |
+| `/Tools/EmojiDownload` | 下载表情 | `Wxid`, `Md5`                            |
+| `/Tools/UploadFile`    | 上传文件 | `Wxid`, `Base64`                         |
+
+#### 文件下载详解
+
+对于大文件，需要使用分段下载机制。`/Tools/DownloadFile` API 支持分段下载，通过 `Section` 参数指定要下载的文件块。
+
+```python
+# 分段下载示例
+# 每次下载 64KB
+chunk_size = 64 * 1024  # 64KB
+total_len = 1024 * 1024  # 总大小 1MB
+file_data = bytearray()
+
+# 计算需要下载的分段数量
+chunks = (total_len + chunk_size - 1) // chunk_size
+
+# 分段下载
+for i in range(chunks):
+    start_pos = i * chunk_size
+    current_chunk_size = min(chunk_size, total_len - start_pos)
+
+    # 构造请求参数
+    json_param = {
+        "AppID": app_id,
+        "AttachId": attach_id,
+        "DataLen": total_len,
+        "Section": {
+            "DataLen": current_chunk_size,
+            "StartPos": start_pos
+        },
+        "UserName": "",  # 可选参数
+        "Wxid": wxid
+    }
+
+    # 发送请求
+    response = await session.post(
+        'http://127.0.0.1:9011/api/Tools/DownloadFile',
+        json=json_param
+    )
+
+    # 处理响应
+    json_resp = await response.json()
+    if json_resp.get("Success"):
+        data = json_resp.get("Data")
+        chunk_data = base64.b64decode(data)
+        file_data.extend(chunk_data)
+```
+
+#### 文件上传详解
+
+使用 `upload_file` 方法可以上传文件到服务器，返回的信息包含 `mediaId`、`attachid` 等字段，可用于后续的文件操作。
+
+```python
+# 上传文件示例
+file_info = await bot.upload_file(file_path)
+
+# 返回的文件信息示例
+# {
+#   'BaseResponse': {'ret': 0, 'errMsg': {}},
+#   'mediaId': '@cdn_3052020100044b30490201000204434d245e02033d14ba0204bc10949d020467fe1a3c042436396534353565362d323734302d346563372d383837342d3030376632616566313933390204052800050201000400c879beff_6c696f716d7776716c67717278647167_1',
+#   'clientAppDataId': 'wxid_uz9za1pqr3ea22_1744706107_UploadFile',
+#   'userName': 'wxid_uz9za1pqr3ea22',
+#   'totalLen': 52757,
+#   'startPos': 52757,
+#   'dataLen': 0,
+#   'createTime': 1744706108
+# }
+```
 
 ### 登录相关 API
 
@@ -556,6 +624,8 @@ XXXBot 提供了多个示例插件，可以作为开发参考：
 - **Dify**：集成 Dify API 的 AI 对话插件，支持文本对话和图片识别功能
 - **YujieSajiao**：语音处理插件示例
 - **GetWeather**：天气查询插件示例
+- **FileDownloader**：文件下载插件，自动下载收到的文件
+- **FileSender**：文件发送插件，可以发送文件给用户
 
 ### Dify 插件图片识别功能
 
