@@ -2023,7 +2023,9 @@ except:
         try:
             from utils.plugin_manager import plugin_manager
 
-            success = await plugin_manager.unload_plugin(plugin_name)
+            # 调用 unload_plugin 方法并设置 add_to_excluded 参数为 True
+            # 这样会将插件添加到禁用列表中并保存到配置文件
+            success = await plugin_manager.unload_plugin(plugin_name, add_to_excluded=True)
             return {"success": success}
         except Exception as e:
             logger.error(f"禁用插件失败: {str(e)}")

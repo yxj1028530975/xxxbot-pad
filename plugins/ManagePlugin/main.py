@@ -71,7 +71,9 @@ class ManagePlugin(PluginBase):
                 await bot.send_text_message(message["FromWxid"], "⚠️插件不存在或未加载")
                 return False  # 阻止后续处理
 
-            attempt = await plugin_manager.unload_plugin(plugin_name)
+            # 调用 unload_plugin 方法并设置 add_to_excluded 参数为 True
+            # 这样会将插件添加到禁用列表中并保存到配置文件
+            attempt = await plugin_manager.unload_plugin(plugin_name, add_to_excluded=True)
             if attempt:
                 await bot.send_text_message(message["FromWxid"], f"✅插件 {plugin_name} 卸载成功")
             else:
@@ -127,5 +129,5 @@ class ManagePlugin(PluginBase):
                 await bot.send_text_message(message["FromWxid"], output)
             else:
                 await bot.send_text_message(message["FromWxid"], "⚠️插件不存在或未加载")
-        
+
         return False  # 所有命令处理完成后阻止后续处理

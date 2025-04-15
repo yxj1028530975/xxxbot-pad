@@ -61,8 +61,14 @@ class PluginManager:
             logger.error(f"加载插件时发生错误: {traceback.format_exc()}")
             return False
 
-    async def unload_plugin(self, plugin_name: str) -> bool:
-        """卸载单个插件"""
+    async def unload_plugin(self, plugin_name: str, add_to_excluded: bool = False) -> bool:
+        """卸载单个插件
+
+        Args:
+            plugin_name: 插件名称
+            add_to_excluded: 是否将插件添加到禁用列表中，默认为 False
+                          只有在用户主动禁用插件时才应该设置为 True
+        """
         if plugin_name not in self.plugins:
             return False
 
@@ -79,6 +85,14 @@ class PluginManager:
             del self.plugin_classes[plugin_name]
             if plugin_name in self.plugin_info.keys():
                 self.plugin_info[plugin_name]["enabled"] = False
+
+            # 只有在用户主动禁用插件时，才将插件添加到禁用列表中
+            if add_to_excluded and plugin_name not in self.excluded_plugins:
+                self.excluded_plugins.append(plugin_name)
+                # 保存禁用插件列表到配置文件
+                self._save_disabled_plugins_to_config()
+                logger.info(f"将插件 {plugin_name} 添加到禁用列表并保存到配置文件")
+
             return True
         except:
             logger.error(f"卸载插件 {plugin_name} 时发生错误: {traceback.format_exc()}")
@@ -144,6 +158,13 @@ class PluginManager:
                                     if getattr(plugin.__class__, 'is_ai_platform', False) and plugin.__class__.__name__ != plugin_name:
                                         logger.info(f"禁用AI平台插件: {plugin.__class__.__name__}")
                                         await self.unload_plugin(plugin.__class__.__name__)
+
+                            # 如果插件在禁用列表中，将其移除
+                            if plugin_name in self.excluded_plugins:
+                                self.excluded_plugins.remove(plugin_name)
+                                # 保存禁用插件列表到配置文件
+                                self._save_disabled_plugins_to_config()
+                                logger.info(f"将插件 {plugin_name} 从禁用列表中移除并保存到配置文件")
 
                             return await self.load_plugin(bot, obj)
             except:
@@ -213,9 +234,15 @@ class PluginManager:
             # 记录当前加载的插件名称，排除 ManagePlugin
             original_plugins = [name for name in self.plugins.keys() if name != "ManagePlugin"]
 
+            # 我们不在这里更新禁用插件列表
+            # 因为这会导致所有当前未启用的插件都被添加到禁用列表中
+            # 包括那些只是暂时未加载的插件
+            # 我们只在 unload_plugin 方法中更新禁用列表，即用户主动禁用插件时
+
             # 卸载除 ManagePlugin 外的所有插件
+            # 注意这里不将插件添加到禁用列表中，因为这只是重载而非禁用
             for plugin_name in original_plugins:
-                await self.unload_plugin(plugin_name)
+                await self.unload_plugin(plugin_name, add_to_excluded=False)
 
             # 重新加载所有模块
             for module_name in list(sys.modules.keys()):
@@ -258,6 +285,26 @@ class PluginManager:
             return None
 
         return [clean_plugin_info(info) for info in self.plugin_info.values()]
+
+    def _save_disabled_plugins_to_config(self):
+        """将禁用的插件列表保存到配置文件中"""
+        try:
+            import tomli_w
+
+            # 读取当前配置
+            with open("main_config.toml", "rb") as f:
+                config = tomllib.load(f)
+
+            # 更新禁用插件列表
+            config["XYBot"]["disabled-plugins"] = self.excluded_plugins
+
+            # 写回配置文件
+            with open("main_config.toml", "wb") as f:
+                tomli_w.dump(config, f)
+
+            logger.info(f"成功将禁用插件列表保存到配置文件: {self.excluded_plugins}")
+        except Exception as e:
+            logger.error(f"保存禁用插件列表到配置文件失败: {e}")
 
     def get_ai_platform_plugins(self) -> List[dict]:
         """获取所有AI平台插件信息"""
