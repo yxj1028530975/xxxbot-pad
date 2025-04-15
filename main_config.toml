@@ -43,6 +43,17 @@ timezone = "Asia/Shanghai"             # 时区设置，中国用户使用 Asia/
 # 实验性功能，如果main_config.toml配置改动，或者plugins文件夹有改动，自动重启。可以在开发时使用，不建议在生产环境使用。
 auto-restart = false                 # 仅建议在开发时启用，生产环境保持false
 
+# 自动重启监控器设置
+[AutoRestart]
+enabled = true                      # 是否启用自动重启监控器
+check-interval = 60                 # 检查间隔（秒）
+offline-threshold = 300             # 离线阈值（秒），超过这个时间没有状态更新就触发重启
+max-restart-attempts = 3            # 最大重启尝试次数
+restart-cooldown = 1800             # 重启冷却时间（秒），两次重启之间的最小间隔
+check-offline-trace = true         # 是否检查掉线追踪，如果为true，则仅在检测到"获取新消息失败"的日志时触发重启
+failure-count-threshold = 10       # 连续失败次数阈值，检测到达到这个次数的"获取新消息失败"时才触发重启
+reset-threshold-multiplier = 3     # 重置阈值倍数，失败计数器重置时间 = 离线阈值 * 此值
+
 # 消息过滤设置
 ignore-mode = "None"            # 消息处理模式：
 # "None" - 处理所有消息

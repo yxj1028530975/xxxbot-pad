@@ -146,7 +146,7 @@ class LoginMixin(WechatAPIClientBase):
 
         async with aiohttp.ClientSession() as session:
             json_param = {"Wxid": wxid}
-            response = await session.post(f'http://{self.ip}:{self.port}/api/Login/AwakenLogin', json=json_param)
+            response = await session.post(f'http://{self.ip}:{self.port}/api/Login/Awaken', json=json_param)
             json_resp = await response.json()
 
             if json_resp.get("Success") and json_resp.get("Data").get("QrCodeResponse").get("Uuid"):
