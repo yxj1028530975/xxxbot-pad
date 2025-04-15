@@ -1700,7 +1700,6 @@ def setup_routes():
                     "version.json",
                     "bot_core.py",
                     "main.py",
-                    "entrypoint.sh",  # 添加entrypoint.sh文件
                     "849"  # 添加849目录，包含协议相关文件
                 ]
 
