@@ -1699,8 +1699,7 @@ def setup_routes():
                     "utils",
                     "version.json",
                     "bot_core.py",
-                    "main.py",
-                    "849"  # 添加849目录，包含协议相关文件
+                    "main.py"
                 ]
 
                 # 备份当前版本的文件
