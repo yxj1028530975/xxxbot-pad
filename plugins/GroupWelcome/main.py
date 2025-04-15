@@ -79,13 +79,30 @@ class GroupWelcome(PluginBase):
 
                 now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-                profile = await bot.get_contact(wxid)
-
-                await bot.send_link_message(message["FromWxid"],
+                try:
+                    # 使用新添加的方法获取群成员信息
+                    member_info = await bot.get_some_member_info(message["FromWxid"], wxid)
+                    
+                    # 获取头像地址
+                    avatar_url = ""
+                    if member_info and isinstance(member_info, dict):
+                        avatar_url = member_info.get("HeadImgUrl", "")
+                    
+                    # 发送欢迎消息
+                    await bot.send_link_message(message["FromWxid"],
                                             title=f"👏欢迎 {nickname} 加入群聊！🎉",
                                             description=f"⌚时间：{now}\n{self.welcome_message}",
                                             url=self.url,
-                                            thumb_url=profile.get("BigHeadImgUrl", "")
+                                            thumb_url=avatar_url
+                                            )
+                except Exception as e:
+                    logger.error(f"获取群成员信息失败: {e}")
+                    # 如果获取失败，使用默认头像发送欢迎消息
+                    await bot.send_link_message(message["FromWxid"],
+                                            title=f"👏欢迎 {nickname} 加入群聊！🎉",
+                                            description=f"⌚时间：{now}\n{self.welcome_message}",
+                                            url=self.url,
+                                            thumb_url=""
                                             )
 
     @staticmethod

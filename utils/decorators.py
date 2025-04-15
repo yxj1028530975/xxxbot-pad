@@ -14,7 +14,7 @@ def schedule(
 ) -> Callable:
     """
     定时任务装饰器
-    
+
     例子:
 
     - @schedule('interval', seconds=30)
@@ -231,6 +231,21 @@ def on_article_message(priority=50):
             setattr(func_to_decorate, '_priority', 50)
             return func_to_decorate
         setattr(func, '_event_type', 'article_message')
+        setattr(func, '_priority', min(max(priority, 0), 99))
+        return func
+
+    return decorator if not callable(priority) else decorator(priority)
+
+
+def on_xml_message(priority=50):
+    """XML消息装饰器"""
+    def decorator(func):
+        if callable(priority):
+            func_to_decorate = priority
+            setattr(func_to_decorate, '_event_type', 'xml_message')
+            setattr(func_to_decorate, '_priority', 50)
+            return func_to_decorate
+        setattr(func, '_event_type', 'xml_message')
         setattr(func, '_priority', min(max(priority, 0), 99))
         return func
 

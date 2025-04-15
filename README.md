@@ -4,6 +4,15 @@
 
 XXXBot 是一个基于微信的智能机器人系统，通过整合多种 API 和功能，提供了丰富的交互体验。本系统包含管理后台界面，支持插件扩展，具备联系人管理、文件管理、系统状态监控等功能，同时与人工智能服务集成，提供智能对话能力。系统支持多种微信接口，包括 PAD 协议和 WeChatAPI，可根据需要灵活切换。
 
+### 🔄 双协议支持
+
+本系统现已支持两种微信协议版本，可以根据需要在配置文件中选择使用：
+
+- **844/849 协议**：适用于 iPad 版本
+- **855 协议**：适用于安卓 PAD 版本
+
+通过在 `main_config.toml` 文件中设置 `Protocol.version` 参数，系统会自动选择相应的服务和 API 路径。详细配置方法请参见[协议配置](#协议配置)部分。
+
 ## 🚀 快速开始
 
 <table>
@@ -126,6 +135,20 @@ XXXBot 是一个基于微信的智能机器人系统，通过整合多种 API �
    github-proxy = "https://ghfast.top/"
    ```
 
+   <h3 id="协议配置">协议配置</h3>
+
+   在 `main_config.toml` 文件中添加以下配置来选择微信协议版本：
+
+   ```toml
+   [Protocol]
+   version = "849"  # 可选值: "849" 或 "855"
+   ```
+
+   - **849**: 适用于 iPad 版本，使用 `/VXAPI` 路径前缀
+   - **855**: 适用于安卓 PAD 版本，使用 `/api` 路径前缀
+
+   系统会根据配置的协议版本自动选择正确的服务路径和 API 路径前缀。如果遇到 API 请求失败的情况，系统会自动尝试使用另一种协议路径，确保功能正常工作。
+
 6. **启动必要的服务**
 
    **需要先启动 Redis 和 PAD 服务**（注意启动顺序！）：
@@ -139,7 +162,9 @@ XXXBot 是一个基于微信的智能机器人系统，通过整合多种 API �
 
    - ❗ **第二步**：启动 PAD 服务 📱
 
-     - 进入`849/pad`目录，双击`linuxService.exe`文件
+     - 根据你的协议版本选择相应的服务：
+       - **849 协议（iPad）**：进入`849/pad`目录，双击`linuxService.exe`文件
+       - **855 协议（安卓 PAD）**：进入`849/pad2`目录，双击`linuxService.exe`文件
      - 等待窗口显示 PAD 服务启动成功
 
    - ⚠️ 请确保这两个服务窗口始终保持打开状态，不要关闭它们！
@@ -175,9 +200,26 @@ XXXBot 是一个基于微信的智能机器人系统，通过整合多种 API �
 
    - ❗ **第二步**：启动 PAD 服务 📱
 
+     根据你的协议版本选择相应的服务：
+
+     **849 协议（iPad）**：
+
      ```bash
      # 进入PAD目录
      cd 849/pad
+
+     # 给执行文件添加执行权限
+     chmod +x linuxService
+
+     # 运行服务
+     ./linuxService
+     ```
+
+     **855 协议（安卓 PAD）**：
+
+     ```bash
+     # 进入PAD2目录
+     cd 849/pad2
 
      # 给执行文件添加执行权限
      chmod +x linuxService
@@ -204,7 +246,7 @@ XXXBot 是一个基于微信的智能机器人系统，通过整合多种 API �
 
 #### 🔺 方法二：Docker 安装 🐳
 
-> 💡 **注意**：Docker 环境会自动启动 Redis 和 PAD 服务，无需手动启动。这是通过 `entrypoint.sh` 脚本实现的。
+> 💡 **注意**：Docker 环境会自动启动 Redis 和 PAD 服务，无需手动启动。这是通过 `entrypoint.sh` 脚本实现的。脚本会根据 `main_config.toml` 中的 `Protocol.version` 设置自动选择启动 849 或 855 协议的 PAD 服务。
 
 1. **使用 Docker Compose 一键部署**
 
@@ -356,6 +398,7 @@ class YourPlugin(PluginBase):
    - 检查网络连接和端口设置
    - 如果使用 PAD 协议，确认 PAD 服务是否正常运行
    - ⚠️ Windows 用户请确认是否按正确顺序启动服务：先启动 Redis，再启动 PAD
+   - 检查 `main_config.toml` 中的协议版本设置是否正确（849 用于 iPad，855 用于安卓 PAD）
 
 4. **Redis 连接错误** 🔋
 
@@ -377,6 +420,7 @@ class YourPlugin(PluginBase):
    - 重启容器：`docker-compose restart`
    - 查看卷数据：`docker volume ls`
    - 💡 注意：Docker 容器内会自动启动 PAD 和 Redis 服务，无需手动启动
+   - 如果需要切换协议版本，只需修改 `main_config.toml` 中的 `Protocol.version` 设置并重启容器
    - ⚠️ Windows 用户注意：Docker 容器使用的是 Linux 环境，不能直接使用 Windows 版的可执行文件
 
 7. **无法访问管理后台** 🛑
@@ -412,7 +456,8 @@ XXXBot/
   ├── utils/                  # 工具函数
   ├── WechatAPI/              # 微信API接口
   ├── 849/                    # PAD协议相关
-  │   ├── pad/               # PAD协议客户端
+  │   ├── pad/               # 849协议客户端（适用于 iPad）
+  │   ├── pad2/              # 855协议客户端（适用于安卓 PAD）
   │   └── redis/             # Redis服务
   ├── app.py                  # 主应用入口
   ├── main.py                 # 机器人主程序

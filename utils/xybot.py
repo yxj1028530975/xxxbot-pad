@@ -55,7 +55,8 @@ class XYBot:
         message["ToWxid"] = message.get("ToWxid", {}).get("string")
 
         # 处理一下自己发的消息
-        if message.get("FromWxid") == self.wxid and message.get("ToWxid", "").endswith("@chatroom"):
+        to_wxid = message.get("ToWxid", "")
+        if message.get("FromWxid") == self.wxid and isinstance(to_wxid, str) and to_wxid.endswith("@chatroom"):
             message["FromWxid"], message["ToWxid"] = message["ToWxid"], message["FromWxid"]
 
         # 根据消息类型触发不同的事件
@@ -368,6 +369,15 @@ class XYBot:
         if type_value == 57:  # 引用消息
             await self.process_quote_message(message)
         elif type_value == 6:  # 文件消息
+            # 先触发 xml_message 事件，再处理文件消息
+            if self.ignore_check(message["FromWxid"], message["SenderWxid"]):
+                if self.ignore_protection or not protector.check(14400):
+                    logger.debug("触发文件消息的 xml_message 事件: 消息ID: {}", message.get("MsgId", ""))
+                    await EventManager.emit("xml_message", self.bot, message)
+                else:
+                    logger.warning("风控保护: 新设备登录后4小时内请挂机")
+
+            # 然后处理文件消息
             await self.process_file_message(message)
         elif type_value == 5:  # 公众号文章或链接分享消息
             logger.info("收到链接分享消息: 消息ID:{} 来自:{} 发送人:{} XML:{}",
@@ -380,10 +390,18 @@ class XYBot:
                     await EventManager.emit("article_message", self.bot, message)
                 else:
                     logger.warning("风控保护: 新设备登录后4小时内请挂机")
-        elif type_value == 74:  # 文件消息，但还在上传，不用管
+        elif type_value == 74:  # 文件消息，但还在上传
             logger.debug("收到上传中文件消息: 消息ID:{} 来自:{}", message.get("MsgId", ""), message["FromWxid"])
         else:
             logger.info("未知的 XML 消息类型: {}, 完整内容: {}", type_value, message["Content"])
+
+        # 触发 xml_message 事件，无论 XML 类型如何
+        if self.ignore_check(message["FromWxid"], message["SenderWxid"]):
+            if self.ignore_protection or not protector.check(14400):
+                logger.debug("触发 xml_message 事件: 消息ID: {}", message.get("MsgId", ""))
+                await EventManager.emit("xml_message", self.bot, message)
+            else:
+                logger.warning("风控保护: 新设备登录后4小时内请挂机")
 
     async def process_quote_message(self, message: Dict[str, Any]):
         """处理引用消息"""
