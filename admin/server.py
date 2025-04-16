@@ -2631,14 +2631,14 @@ except:
                     github_url = github_url[:-4]
 
                 # 尝试下载main分支
-                zip_url = get_github_url(f"https://github.com/{github_url}/archive/refs/heads/main.zip")
+                zip_url = get_github_url(f"{github_url}/archive/refs/heads/main.zip")
                 logger.info(f"正在从 {zip_url} 下载插件...")
 
                 try:
                     response = requests.get(zip_url, timeout=30)
                     if response.status_code != 200:
                         # 尝试使用master分支
-                        zip_url = get_github_url(f"https://github.com/{github_url}/archive/refs/heads/master.zip")
+                        zip_url = get_github_url(f"{github_url}/archive/refs/heads/master.zip")
                         logger.info(f"尝试从master分支下载: {zip_url}")
                         response = requests.get(zip_url, timeout=30)
 
@@ -5866,14 +5866,19 @@ def get_bot(wxid):
                     github_url = github_url[:-4]
 
                 # 尝试下载main分支
-                zip_url = get_github_url(f"https://github.com/{github_url}/archive/refs/heads/main.zip")
+                zip_url = get_github_url(f"{github_url}/archive/refs/heads/main.zip")
                 logger.info(f"正在从 {zip_url} 下载插件...")
 
                 try:
                     response = requests.get(zip_url, timeout=30)
                     if response.status_code != 200:
                         # 尝试使用master分支
-                        master_url = get_github_url(f"https://github.com/{github_url}/archive/refs/heads/master.zip")
+                        # 处理github_url可能已经包含"https://github.com/"前缀的情况
+                        if github_url.startswith("https://github.com/"):
+                            # 移除前缀
+                            github_url = github_url[19:]
+
+                        master_url = get_github_url(f"{github_url}/archive/refs/heads/master.zip")
                         logger.info(f"尝试从master分支下载: {master_url}")
                         response = requests.get(master_url, timeout=30)
 
@@ -6100,8 +6105,13 @@ def get_bot(wxid):
                 if github_url.endswith('.git'):
                     github_url = github_url[:-4]
 
+                # 处理github_url可能已经包含"https://github.com/"前缀的情况
+                if github_url.startswith("https://github.com/"):
+                    # 移除前缀
+                    github_url = github_url[19:]
+
                 # 使用GitHub加速服务
-                zip_url = get_github_url(f"https://github.com/{github_url}/archive/refs/heads/main.zip")
+                zip_url = get_github_url(f"{github_url}/archive/refs/heads/main.zip")
 
                 # 下载 ZIP 文件
                 logger.info(f"正在从 {zip_url} 下载插件...")
@@ -6109,7 +6119,7 @@ def get_bot(wxid):
                     response = requests.get(zip_url, timeout=30)
                     if response.status_code != 200:
                         # 尝试使用 master 分支
-                        master_url = get_github_url(f"https://github.com/{github_url}/archive/refs/heads/master.zip")
+                        master_url = get_github_url(f"{github_url}/archive/refs/heads/master.zip")
                         logger.info(f"尝试从 master 分支下载: {master_url}")
                         response = requests.get(master_url, timeout=30)
                 except Exception as e:
