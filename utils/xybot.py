@@ -18,14 +18,53 @@ class XYBot:
         self.alias = None
         self.phone = None
 
-        with open("main_config.toml", "rb") as f:
-            main_config = tomllib.load(f)
+        # 打印当前工作目录，便于调试
+        import os
+        logger.debug(f"当前工作目录: {os.getcwd()}")
+
+        # 检查配置文件是否存在
+        config_path = "main_config.toml"
+        if not os.path.exists(config_path):
+            logger.error(f"配置文件 {config_path} 不存在")
+            main_config = {}
+        else:
+            logger.debug(f"配置文件 {config_path} 存在，大小: {os.path.getsize(config_path)} 字节")
+            try:
+                with open(config_path, "rb") as f:
+                    main_config = tomllib.load(f)
+                    # 打印配置文件的所有键
+                    logger.debug(f"配置文件的所有键: {list(main_config.keys())}")
+            except Exception as e:
+                logger.error(f"加载配置文件失败: {e}")
+                main_config = {}
 
         self.ignore_protection = main_config.get("XYBot", {}).get("ignore-protection", False)
 
-        self.ignore_mode = main_config.get("XYBot", {}).get("ignore-mode", "")
-        self.whitelist = main_config.get("XYBot", {}).get("whitelist", [])
-        self.blacklist = main_config.get("XYBot", {}).get("blacklist", [])
+        # 从配置文件中读取消息过滤设置
+        try:
+            # 尝试从顶层读取设置
+            if "ignore-mode" in main_config:
+                self.ignore_mode = main_config["ignore-mode"]
+                self.whitelist = main_config["whitelist"]
+                self.blacklist = main_config["blacklist"]
+            # 如果顶层没有，尝试从AutoRestart部分读取
+            elif "AutoRestart" in main_config and "ignore-mode" in main_config["AutoRestart"]:
+                self.ignore_mode = main_config["AutoRestart"]["ignore-mode"]
+                self.whitelist = main_config["AutoRestart"]["whitelist"]
+                self.blacklist = main_config["AutoRestart"]["blacklist"]
+            else:
+                # 如果都没有，使用默认值
+                raise KeyError("ignore-mode not found in config")
+        except KeyError as e:
+            # 如果读取失败，使用默认值
+            self.ignore_mode = "None"
+            self.whitelist = []
+            self.blacklist = []
+
+        # 记录配置信息
+        logger.info(f"消息过滤模式: {self.ignore_mode}")
+        logger.info(f"白名单: {self.whitelist}")
+        logger.info(f"黑名单: {self.blacklist}")
 
         self.msg_db = MessageDB()
 
@@ -628,11 +667,30 @@ class XYBot:
                 logger.warning("风控保护: 新设备登录后4小时内请挂机")
 
     def ignore_check(self, FromWxid: str, SenderWxid: str):
+        # 先检查是否是群聊消息
+        is_group = FromWxid.endswith("@chatroom")
+
         if self.ignore_mode == "Whitelist":
-            return (FromWxid in self.whitelist) or (SenderWxid in self.whitelist)
-        elif self.ignore_mode == "blacklist":
-            return (FromWxid not in self.blacklist) and (SenderWxid not in self.blacklist)
+            if is_group:
+                # 群聊消息：有三种情况
+                # 1. 群聊ID和发送者ID都在白名单中
+                # 2. 群聊ID在白名单中，且发送者是机器人自己
+                # 3. 发送者ID在白名单中（无论群聊ID是否在白名单中）
+
+                # 只有当发送者ID在白名单中，或者群聊ID在白名单中且发送者是机器人自己时，才处理消息
+                return SenderWxid in self.whitelist or (FromWxid in self.whitelist and SenderWxid == self.wxid)
+            else:
+                # 私聊消息：发送者ID在白名单中
+                return SenderWxid in self.whitelist
+        elif self.ignore_mode == "Blacklist":
+            if is_group:
+                # 群聊消息：群聊ID不在黑名单中且发送者ID不在黑名单中
+                return (FromWxid not in self.blacklist) and (SenderWxid not in self.blacklist)
+            else:
+                # 私聊消息：发送者ID不在黑名单中
+                return SenderWxid not in self.blacklist
         else:
+            # 默认处理所有消息
             return True
 
     # 朋友圈相关方法

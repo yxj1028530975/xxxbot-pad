@@ -61,9 +61,14 @@ ignore-mode = "None"            # 消息处理模式：
 # "Blacklist" - 屏蔽黑名单消息
 
 whitelist = [# 白名单列表
-    # 在此添加个人用户微信ID或群聊ID
+    "wxid_uz9za1pqr3ea22",  # 您的个人微信ID
+    "wxid_l5im9jaxhr4412",  # 您的另一个微信ID
+    "48369192388@chatroom"  # 您的群聊ID
 ]
 
 blacklist = [# 黑名单列表
-    # 在此添加个人用户微信ID或群聊ID
+    "wxid_3", # 个人用户微信ID
+    "wxid_4",
+    "333@chatroom", # 群聊ID
+    "444@chatroom"
 ]
