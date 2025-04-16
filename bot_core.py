@@ -16,6 +16,7 @@ from database.messsagDB import MessageDB
 from utils.decorators import scheduler
 from utils.plugin_manager import plugin_manager
 from utils.xybot import XYBot
+from utils.notification_service import init_notification_service, get_notification_service
 
 # 导入管理后台模块
 try:
@@ -459,6 +460,20 @@ async def bot_core():
         "alias": bot.alias
     })
 
+    # 先初始化通知服务，再发送重连通知
+    # 初始化通知服务
+    notification_config = config.get("Notification", {})
+    notification_service = init_notification_service(notification_config)
+    logger.info(f"通知服务初始化完成，启用状态: {notification_service.enabled}")
+
+    # 发送微信重连通知
+    if notification_service and notification_service.enabled and notification_service.triggers.get("reconnect", False):
+        if notification_service.token:
+            logger.info(f"发送微信重连通知，微信ID: {bot.wxid}")
+            asyncio.create_task(notification_service.send_reconnect_notification(bot.wxid))
+        else:
+            logger.warning("PushPlus Token未设置，无法发送重连通知")
+
     # ========== 登录完毕 开始初始化 ========== #
 
     # 开启自动心跳
@@ -488,6 +503,8 @@ async def bot_core():
 
     keyval_db = KeyvalDB()
     await keyval_db.initialize()
+
+    # 通知服务已在前面初始化完成
 
     # 启动调度器
     scheduler.start()
@@ -528,16 +545,50 @@ async def bot_core():
         logger.error(f"启动自动重启监控器失败: {e}")
 
     logger.success("开始处理消息")
+
+    # 添加重连检测变量
+    message_failure_count = 0
+    max_failure_count = 3  # 连续失败超过这个数量则认为离线
+    is_offline = False
+
     while True:
         # 不需要记录当前时间
 
         try:
             ok,data = await bot.sync_message()
+
+            # 如果成功获取消息，重置失败计数
+            if ok:
+                # 如果之前处于离线状态，现在恢复了，发送重连通知
+                if is_offline and message_failure_count > 0:
+                    is_offline = False
+                    message_failure_count = 0
+
+                    # 发送重连通知
+                    notification_service = get_notification_service()
+                    if notification_service and notification_service.enabled and notification_service.triggers.get("reconnect", False):
+                        if notification_service.token:
+                            logger.info(f"发送微信重连通知，微信ID: {bot.wxid}")
+                            asyncio.create_task(notification_service.send_reconnect_notification(bot.wxid))
+                        else:
+                            logger.warning("PushPlus Token未设置，无法发送重连通知")
+
+                # 正常情况下重置计数器
+                if message_failure_count > 0:
+                    message_failure_count = 0
+
         except Exception as e:
             logger.warning("获取新消息失败 {}", e)
-            # 注释掉自动重新登录的部分，改为等待一段时间后重试
+            # 增加失败计数
+            message_failure_count += 1
+
+            # 如果连续失败超过阈值，标记为离线状态
+            if message_failure_count >= max_failure_count and not is_offline:
+                is_offline = True
+                logger.warning(f"连续 {message_failure_count} 次获取消息失败，微信可能已离线")
+
+            # 等待一段时间后重试
             await asyncio.sleep(5)
-            # 记录错误但继续运行
             logger.info("5秒后继续尝试获取消息")
             continue
 
@@ -549,26 +600,38 @@ async def bot_core():
             # await bot_core()
             # break
 
-        if not ok:
-            logger.warning("获取新消息失败")
-            # 注释掉自动重新登录的部分，改为等待一段时间后重试
-            await asyncio.sleep(5)
-            # 记录错误但继续运行
-            logger.info("5秒后继续尝试获取消息")
-            continue
+        # 如果成功获取消息但没有数据，处理消息数据
 
-            # 以下代码已注释，不再自动重新登录
-            # update_bot_status("waiting_login", "等待微信登录")
-            # 清除所有定时任务
-            # scheduler.remove_all_jobs()
-            # logger.success("所有定时任务已清除")
-            # await bot_core()
-            # break
+        # 检查data是否为字典类型
+        if isinstance(data, dict):
+            messages = data.get("AddMsgs")
+            if messages:
+                for message in messages:
+                    asyncio.create_task(xybot.process_message(message))
+        elif data:  # 如果data不是字典但有值，记录日志
+            logger.warning(f"Unexpected data type: {type(data)}, value: {data}")
 
-        data = data.get("AddMsgs")
-        if data:
-            for message in data:
-                asyncio.create_task(xybot.process_message(message))
+            # 检测特定的错误消息
+            if isinstance(data, str) and "用户可能退出" in data:
+                # 如果检测到用户退出消息，增加失败计数
+                message_failure_count += 1
+
+                # 如果连续失败超过阈值，标记为离线状态
+                if message_failure_count >= max_failure_count and not is_offline:
+                    is_offline = True
+                    logger.warning(f"检测到用户退出消息，微信可能已离线")
+
+                    # 发送离线通知
+                    notification_service = get_notification_service()
+                    if notification_service and notification_service.enabled and notification_service.triggers.get("offline", False):
+                        if notification_service.token:
+                            logger.info(f"发送微信离线通知，微信ID: {bot.wxid}")
+                            asyncio.create_task(notification_service.send_offline_notification(bot.wxid))
+                        else:
+                            logger.warning("PushPlus Token未设置，无法发送离线通知")
+
+                    # 更新状态为离线
+                    update_bot_status("offline", "微信已离线")
         # 使用异步睡眠替代忙等待循环
         await asyncio.sleep(0.5)
 

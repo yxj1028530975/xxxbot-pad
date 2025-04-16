@@ -2,6 +2,7 @@ import os
 import asyncio
 import sys
 import subprocess
+import datetime
 from pathlib import Path
 from fastapi import FastAPI, Request, APIRouter
 from fastapi.responses import JSONResponse
@@ -23,6 +24,27 @@ async def restart_system():
         # 等待1秒让响应先返回
         await asyncio.sleep(1)
         logger.warning("正在重启系统...")
+
+        # 发送重启通知
+        try:
+            # 导入通知服务和状态获取函数
+            from utils.notification_service import get_notification_service
+            from utils.bot_status import get_bot_status
+
+            notification_service = get_notification_service()
+            if notification_service and notification_service.enabled and notification_service.triggers.get("restart", False):
+                # 获取当前微信ID
+                status_data = get_bot_status()
+                wxid = status_data.get("wxid", "")
+
+                if wxid:
+                    logger.info(f"发送系统重启通知，微信ID: {wxid}")
+                    # 等待通知发送完成
+                    await notification_service.send_restart_notification(wxid)
+                else:
+                    logger.warning("无法获取当前微信ID，跳过发送重启通知")
+        except Exception as e:
+            logger.error(f"发送重启通知失败: {e}")
 
         # 检测是否在Docker容器中运行
         in_docker = os.path.exists('/.dockerenv') or os.path.exists('/app/.dockerenv')

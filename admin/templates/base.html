@@ -186,14 +186,20 @@
                 <li class="nav-item">
                     <a href="/accounts" class="nav-link {% if request.path == '/accounts' %}active{% endif %}">
                         <i class="bi bi-person-badge"></i>
-                        <span>账号管理</span>                        
+                        <span>账号管理</span>
                     </a>
                 </li>
                 <li class="nav-item">
                     <a href="/system" class="nav-link {% if request.path == '/system' %}active{% endif %}">
                         <i class="bi bi-gear"></i>
                         <span>系统状态</span>
-                    </a>                    
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a href="/notification" class="nav-link {% if request.path == '/notification' %}active{% endif %}">
+                        <i class="bi bi-bell"></i>
+                        <span>通知设置</span>
+                    </a>
                 </li>
                 <li class="nav-item mt-4">
                     <a href="/qrcode" class="nav-link special-link">
@@ -293,6 +299,10 @@
         <a href="/system" class="mobile-nav-item {% if request.path == '/system' %}active{% endif %}">
             <i class="bi bi-gear"></i>
             <span>系统</span>
+        </a>
+        <a href="/notification" class="mobile-nav-item {% if request.path == '/notification' %}active{% endif %}">
+            <i class="bi bi-bell"></i>
+            <span>通知</span>
         </a>
     </nav>
 
