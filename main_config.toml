@@ -1,6 +1,6 @@
 # 协议版本选择
 [Protocol]
-version = "849"            # 协议版本，可选值: "849" 或 "855"
+version = "855"            # 协议版本，可选值: "849" 或 "855"
 
 [WechatAPIServer]
 port = 9011                # WechatAPI服务器端口，默认9000，如有冲突可修改
