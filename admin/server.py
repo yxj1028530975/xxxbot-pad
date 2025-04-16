@@ -13,6 +13,20 @@ from typing import Optional, Dict, List, Any, Union, Set
 import sqlite3
 import glob
 
+# 导入 tomllib 或 tomli 用于解析 TOML 文件
+try:
+    import tomllib  # Python 3.11+
+except ImportError:
+    try:
+        import tomli as tomllib  # Python 3.10 及以下版本
+    except ImportError:
+        # 如果 tomli 也不可用，提供一个简单的错误处理
+        class TomliNotAvailable:
+            @staticmethod
+            def load(f):
+                raise ImportError("tomllib 或 tomli 库不可用，请安装 tomli 库: pip install tomli")
+        tomllib = TomliNotAvailable()
+
 import uvicorn
 from fastapi import FastAPI, Request, Response, Depends, HTTPException, WebSocket, WebSocketDisconnect, Body, File, Form, UploadFile
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
@@ -5593,6 +5607,350 @@ async def simple_upload(request: Request, files: List[UploadFile] = File(...), p
 async def api_upload(request: Request, files: List[UploadFile] = File(...), path: str = Form("/")):
     """备用上传API路径 - 转发到简化上传API"""
     return await simple_upload(request, files, path)
+
+# 通知设置页面
+@app.get("/notification", response_class=HTMLResponse)
+async def notification_page(request: Request):
+    """PushPlus通知设置页面"""
+    # 检查认证状态
+    try:
+        # 从 Cookie 中获取会话数据
+        session_cookie = request.cookies.get("session")
+        if not session_cookie:
+            logger.debug("未找到会话 Cookie")
+            return RedirectResponse(url="/login?next=/notification")
+
+        # 解码会话数据
+        serializer = URLSafeSerializer(config["secret_key"], "session")
+        session_data = serializer.loads(session_cookie)
+
+        # 检查会话是否已过期
+        expires = session_data.get("expires", 0)
+        if expires < time.time():
+            logger.debug(f"会话已过期: 当前时间 {time.time()}, 过期时间 {expires}")
+            return RedirectResponse(url="/login?next=/notification")
+
+        # 会话有效
+        username = session_data.get("username")
+        logger.debug(f"用户 {username} 访问通知设置页面")
+    except Exception as e:
+        logger.error(f"访问通知设置页面失败: {str(e)}")
+        return RedirectResponse(url="/login?next=/notification")
+
+    # 获取版本信息
+    try:
+        version_info = get_version_info()
+        version = version_info.get("version", "1.0.0")
+        update_available = version_info.get("update_available", False)
+        latest_version = version_info.get("latest_version", "")
+        update_url = version_info.get("update_url", "")
+        update_description = version_info.get("update_description", "")
+    except Exception as e:
+        logger.error(f"获取版本信息失败: {str(e)}")
+        version = "1.0.0"
+        update_available = False
+        latest_version = ""
+        update_url = ""
+        update_description = ""
+
+    return templates.TemplateResponse(
+        "notification.html",
+        {
+            "request": request,
+            "username": username,
+            "version": version,
+            "update_available": update_available,
+            "latest_version": latest_version,
+            "update_url": update_url,
+            "update_description": update_description,
+            "testResult": None,  # 初始化为 None以避免模板错误
+            "notificationHistory": []  # 初始化为空列表以避免模板错误
+        }
+    )
+
+# 获取通知设置 API
+@app.get("/api/notification/settings", response_class=JSONResponse)
+async def api_get_notification_settings(request: Request):
+    """API: 获取通知设置"""
+    # 检查认证状态
+    try:
+        # 从 Cookie 中获取会话数据
+        session_cookie = request.cookies.get("session")
+        if not session_cookie:
+            logger.debug("未找到会话 Cookie")
+            return JSONResponse(status_code=401, content={"success": False, "message": "未认证"})
+
+        # 解码会话数据
+        serializer = URLSafeSerializer(config["secret_key"], "session")
+        session_data = serializer.loads(session_cookie)
+
+        # 检查会话是否已过期
+        expires = session_data.get("expires", 0)
+        if expires < time.time():
+            logger.debug(f"会话已过期: 当前时间 {time.time()}, 过期时间 {expires}")
+            return JSONResponse(status_code=401, content={"success": False, "message": "未认证"})
+
+        # 会话有效
+        username = session_data.get("username")
+    except Exception as e:
+        logger.error(f"访问通知设置 API 失败: {str(e)}")
+        return JSONResponse(status_code=401, content={"success": False, "message": "未认证"})
+
+    try:
+        # 从配置文件中读取通知设置
+        from pathlib import Path
+        config_path = Path(current_dir).parent / "main_config.toml"
+        try:
+            with open(config_path, "rb") as f:
+                # 使用全局导入的tomllib
+                config_data = tomllib.load(f)
+        except Exception as e:
+            logger.error(f"读取配置文件失败: {str(e)}")
+            return JSONResponse(status_code=500, content={
+                "success": False,
+                "message": f"读取配置文件失败: {str(e)}"
+            })
+
+        # 获取通知设置
+        notification_config = config_data.get("Notification", {})
+
+        # 返回设置
+        return JSONResponse(content={
+            "success": True,
+            "config": notification_config
+        })
+    except Exception as e:
+        logger.error(f"获取通知设置失败: {str(e)}")
+        return JSONResponse(content={
+            "success": False,
+            "message": f"获取通知设置失败: {str(e)}"
+        })
+
+# 更新通知设置 API
+@app.post("/api/notification/settings", response_class=JSONResponse)
+async def api_update_notification_settings(request: Request):
+    """API: 更新通知设置"""
+    # 检查认证状态
+    try:
+        # 从 Cookie 中获取会话数据
+        session_cookie = request.cookies.get("session")
+        if not session_cookie:
+            logger.debug("未找到会话 Cookie")
+            return JSONResponse(status_code=401, content={"success": False, "message": "未认证"})
+
+        # 解码会话数据
+        serializer = URLSafeSerializer(config["secret_key"], "session")
+        session_data = serializer.loads(session_cookie)
+
+        # 检查会话是否已过期
+        expires = session_data.get("expires", 0)
+        if expires < time.time():
+            logger.debug(f"会话已过期: 当前时间 {time.time()}, 过期时间 {expires}")
+            return JSONResponse(status_code=401, content={"success": False, "message": "未认证"})
+
+        # 会话有效
+        username = session_data.get("username")
+    except Exception as e:
+        logger.error(f"访问通知设置 API 失败: {str(e)}")
+        return JSONResponse(status_code=401, content={"success": False, "message": "未认证"})
+
+    try:
+        # 获取请求数据
+        new_config = await request.json()
+
+        # 读取当前配置文件
+        from pathlib import Path
+        config_path = Path(current_dir).parent / "main_config.toml"
+        try:
+            with open(config_path, "rb") as f:
+                config_data = tomllib.load(f)
+        except Exception as e:
+            logger.error(f"读取配置文件失败: {str(e)}")
+            return JSONResponse(content={
+                "success": False,
+                "message": f"读取配置文件失败: {str(e)}"
+            })
+
+        # 更新通知设置
+        config_data["Notification"] = new_config
+
+        # 将配置写回文件
+        with open(config_path, "w", encoding="utf-8") as f:
+            # 手动构建 TOML 格式
+            for section, section_data in config_data.items():
+                f.write(f"[{section}]\n")
+                for key, value in section_data.items():
+                    if isinstance(value, bool):
+                        f.write(f"{key} = {str(value).lower()}\n")
+                    elif isinstance(value, (int, float)):
+                        f.write(f"{key} = {value}\n")
+                    elif isinstance(value, dict):
+                        # 处理嵌套字典
+                        f.write(f"\n[{section}.{key}]\n")
+                        for sub_key, sub_value in value.items():
+                            if isinstance(sub_value, bool):
+                                f.write(f"{sub_key} = {str(sub_value).lower()}\n")
+                            elif isinstance(sub_value, (int, float)):
+                                f.write(f"{sub_key} = {sub_value}\n")
+                            else:
+                                f.write(f"{sub_key} = \"{sub_value}\"\n")
+                    else:
+                        f.write(f"{key} = \"{value}\"\n")
+                f.write("\n")
+
+        # 重新加载通知服务
+        try:
+            from utils.notification_service import get_notification_service
+            notification_service = get_notification_service()
+            if notification_service:
+                notification_service.update_config(new_config)
+                logger.info("通知服务配置已更新")
+        except Exception as e:
+            logger.error(f"重新加载通知服务失败: {str(e)}")
+
+        return JSONResponse(content={
+            "success": True,
+            "message": "通知设置已更新"
+        })
+    except Exception as e:
+        logger.error(f"更新通知设置失败: {str(e)}")
+        return JSONResponse(content={
+            "success": False,
+            "message": f"更新通知设置失败: {str(e)}"
+        })
+
+# 发送测试通知 API
+@app.post("/api/notification/test", response_class=JSONResponse)
+async def api_send_test_notification(request: Request):
+    """API: 发送测试通知"""
+    # 检查认证状态
+    try:
+        # 从 Cookie 中获取会话数据
+        session_cookie = request.cookies.get("session")
+        if not session_cookie:
+            logger.debug("未找到会话 Cookie")
+            return JSONResponse(status_code=401, content={"success": False, "message": "未认证"})
+
+        # 解码会话数据
+        serializer = URLSafeSerializer(config["secret_key"], "session")
+        session_data = serializer.loads(session_cookie)
+
+        # 检查会话是否已过期
+        expires = session_data.get("expires", 0)
+        if expires < time.time():
+            logger.debug(f"会话已过期: 当前时间 {time.time()}, 过期时间 {expires}")
+            return JSONResponse(status_code=401, content={"success": False, "message": "未认证"})
+
+        # 会话有效
+        username = session_data.get("username")
+    except Exception as e:
+        logger.error(f"访问测试通知 API 失败: {str(e)}")
+        return JSONResponse(status_code=401, content={"success": False, "message": "未认证"})
+
+    try:
+        # 获取当前微信ID
+        bot_status = get_bot_status()
+        wxid = bot_status.get("wxid", "")
+
+        if not wxid:
+            return JSONResponse(content={
+                "success": False,
+                "message": "无法获取当前微信ID"
+            })
+
+        # 发送测试通知
+        from utils.notification_service import get_notification_service
+        notification_service = get_notification_service()
+
+        if not notification_service:
+            return JSONResponse(content={
+                "success": False,
+                "message": "通知服务未初始化"
+            })
+
+        if not notification_service.enabled:
+            return JSONResponse(content={
+                "success": False,
+                "message": "通知服务未启用"
+            })
+
+        if not notification_service.token:
+            return JSONResponse(content={
+                "success": False,
+                "message": "PushPlus Token 未设置"
+            })
+
+        # 发送测试通知
+        success = await notification_service.send_test_notification(wxid)
+
+        if success:
+            return JSONResponse(content={
+                "success": True,
+                "message": "测试通知已发送"
+            })
+        else:
+            return JSONResponse(content={
+                "success": False,
+                "message": "发送测试通知失败"
+            })
+    except Exception as e:
+        logger.error(f"发送测试通知失败: {str(e)}")
+        return JSONResponse(content={
+            "success": False,
+            "message": f"发送测试通知失败: {str(e)}"
+        })
+
+# 获取通知历史 API
+@app.get("/api/notification/history", response_class=JSONResponse)
+async def api_get_notification_history(request: Request):
+    """API: 获取通知历史"""
+    # 检查认证状态
+    try:
+        # 从 Cookie 中获取会话数据
+        session_cookie = request.cookies.get("session")
+        if not session_cookie:
+            logger.debug("未找到会话 Cookie")
+            return JSONResponse(status_code=401, content={"success": False, "message": "未认证"})
+
+        # 解码会话数据
+        serializer = URLSafeSerializer(config["secret_key"], "session")
+        session_data = serializer.loads(session_cookie)
+
+        # 检查会话是否已过期
+        expires = session_data.get("expires", 0)
+        if expires < time.time():
+            logger.debug(f"会话已过期: 当前时间 {time.time()}, 过期时间 {expires}")
+            return JSONResponse(status_code=401, content={"success": False, "message": "未认证"})
+
+        # 会话有效
+        username = session_data.get("username")
+    except Exception as e:
+        logger.error(f"访问通知历史 API 失败: {str(e)}")
+        return JSONResponse(status_code=401, content={"success": False, "message": "未认证"})
+
+    try:
+        # 获取通知历史
+        from utils.notification_service import get_notification_service
+        notification_service = get_notification_service()
+
+        if not notification_service:
+            return JSONResponse(content={
+                "success": False,
+                "message": "通知服务未初始化"
+            })
+
+        history = notification_service.get_history(limit=20)
+
+        return JSONResponse(content={
+            "success": True,
+            "history": history
+        })
+    except Exception as e:
+        logger.error(f"获取通知历史失败: {str(e)}")
+        return JSONResponse(content={
+            "success": False,
+            "message": f"获取通知历史失败: {str(e)}"
+        })
 
 # 启动服务器
 def start_server(host_arg=None, port_arg=None, username_arg=None, password_arg=None, debug_arg=None, bot=None):

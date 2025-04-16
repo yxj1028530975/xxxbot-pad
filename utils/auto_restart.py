@@ -12,6 +12,7 @@ from loguru import logger
 # 导入重启函数
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from admin.restart_api import restart_system
+from utils.notification_service import get_notification_service
 
 class AutoRestartMonitor:
     """自动检测掉线并重启的监控器"""
@@ -357,6 +358,18 @@ class AutoRestartMonitor:
                     logger.warning("检测到机器人可能已离线，准备重启")
                     self._record_restart(restart_reason)
 
+                    # 发送离线通知
+                    notification_service = get_notification_service()
+                    if notification_service and notification_service.enabled:
+                        # 获取当前微信ID
+                        wxid = status_data.get("wxid", "")
+                        if wxid:
+                            logger.info(f"发送离线通知，微信ID: {wxid}")
+                            # 创建异步任务发送通知，不阻塞重启过程
+                            asyncio.create_task(notification_service.send_offline_notification(wxid))
+                        else:
+                            logger.warning("无法获取当前微信ID，跳过发送离线通知")
+
                     # 触发重启
                     await restart_system()
 
@@ -366,6 +379,18 @@ class AutoRestartMonitor:
                 # 检查是否可以重启
                 if self._can_restart():
                     self._record_restart(f"状态为 {status}")
+
+                    # 发送离线通知
+                    notification_service = get_notification_service()
+                    if notification_service and notification_service.enabled:
+                        # 获取当前微信ID
+                        wxid = status_data.get("wxid", "")
+                        if wxid:
+                            logger.info(f"发送离线通知，微信ID: {wxid}")
+                            # 创建异步任务发送通知，不阻塞重启过程
+                            asyncio.create_task(notification_service.send_offline_notification(wxid))
+                        else:
+                            logger.warning("无法获取当前微信ID，跳过发送离线通知")
 
                     # 触发重启
                     await restart_system()

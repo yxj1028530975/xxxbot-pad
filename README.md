@@ -135,6 +135,42 @@ XXXBot 是一个基于微信的智能机器人系统，通过整合多种 API �
    github-proxy = "https://ghfast.top/"
    ```
 
+   **设置系统通知功能：**
+
+   在 `main_config.toml` 文件中配置系统通知功能（微信离线、重连、重启等通知）：
+
+   ```toml
+   # 系统通知设置
+   [Notification]
+   enabled = true                      # 是否启用通知功能
+   token = "your_pushplus_token"       # PushPlus Token，必须在这里设置！
+   channel = "wechat"                  # 通知渠道：wechat(微信公众号)、sms(短信)、mail(邮件)、webhook、cp(企业微信)
+   template = "html"                   # 通知模板
+   topic = ""                          # 群组编码，不填仅发送给自己
+
+   # 通知触发条件
+   [Notification.triggers]
+   offline = true                      # 微信离线时通知
+   reconnect = true                    # 微信重新连接时通知
+   restart = true                      # 系统重启时通知
+   error = true                        # 系统错误时通知
+
+   # 通知模板设置
+   [Notification.templates]
+   offlineTitle = "警告：微信离线通知 - {time}"  # 离线通知标题
+   offlineContent = "您的微信账号 <b>{wxid}</b> 已于 <span style=\"color:#ff4757;font-weight:bold;\">{time}</span> 离线，请尽快检查您的设备连接状态或重新登录。"  # 离线通知内容
+   reconnectTitle = "微信重新连接通知 - {time}"  # 重连通知标题
+   reconnectContent = "您的微信账号 <b>{wxid}</b> 已于 <span style=\"color:#2ed573;font-weight:bold;\">{time}</span> 重新连接。"  # 重连通知内容
+   restartTitle = "系统重启通知 - {time}"  # 系统重启通知标题
+   restartContent = "系统已于 <span style=\"color:#1e90ff;font-weight:bold;\">{time}</span> 重新启动。"  # 系统重启通知内容
+   ```
+
+   ❗ **重要提示：**
+
+   - PushPlus Token 必须在 `main_config.toml` 文件中直接设置，而不是通过网页界面设置
+   - 如果通过网页界面设置，可能会导致容器无法正常启动
+   - 请先在 [PushPlus 官网](http://www.pushplus.plus/) 注册并获取 Token
+
    <h3 id="协议配置">协议配置</h3>
 
    在 `main_config.toml` 文件中添加以下配置来选择微信协议版本：
