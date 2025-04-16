@@ -5474,8 +5474,8 @@ async def accounts_page(request: Request):
 
 # 添加一个简化的文件上传API - 直接在模块顶层定义，确保路由被正确注册
 @app.post("/upload")
-async def simple_upload(request: Request, files: List[UploadFile] = File(...)):
-    """简化的文件上传API，直接保存到项目的files目录"""
+async def simple_upload(request: Request, files: List[UploadFile] = File(...), path: str = Form("/")):
+    """简化的文件上传API，保存到用户指定的路径"""
     try:
         # 从 Cookie 中获取会话数据
         session_cookie = request.cookies.get("session")
@@ -5510,11 +5510,26 @@ async def simple_upload(request: Request, files: List[UploadFile] = File(...)):
                 'message': '会话解析失败，请重新登录'
             })
 
-        # 使用固定的上传目录 - 项目根目录下的files文件夹
-        upload_dir = os.path.join(Path(current_dir).parent, "files")
-        os.makedirs(upload_dir, exist_ok=True)
+        # 处理相对路径
+        if not path.startswith('/'):
+            path = '/' + path
 
-        logger.debug(f"用户 {username} 请求上传文件到路径: {upload_dir}")
+        # 获取完整路径 - 从项目根目录开始
+        root_dir = Path(current_dir).parent
+        full_path = root_dir / path.lstrip('/')
+
+        # 安全检查：确保路径在项目目录内
+        if not os.path.abspath(full_path).startswith(os.path.abspath(root_dir)):
+            logger.warning(f"尝试上传到不安全的路径: {full_path}")
+            return JSONResponse(status_code=403, content={
+                'success': False,
+                'message': '无法上传到项目目录外的位置'
+            })
+
+        # 确保目录存在
+        os.makedirs(full_path, exist_ok=True)
+
+        logger.debug(f"用户 {username} 请求上传文件到路径: {path} -> {full_path}")
 
         # 处理上传的文件
         uploaded_files = []
@@ -5523,7 +5538,7 @@ async def simple_upload(request: Request, files: List[UploadFile] = File(...)):
         for file in files:
             try:
                 # 构建目标文件路径
-                target_file_path = os.path.join(upload_dir, file.filename)
+                target_file_path = os.path.join(full_path, file.filename)
 
                 # 检查文件是否已存在
                 if os.path.exists(target_file_path):
@@ -5532,7 +5547,7 @@ async def simple_upload(request: Request, files: List[UploadFile] = File(...)):
                     filename_parts = os.path.splitext(file.filename)
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                     new_filename = f"{filename_parts[0]}_{timestamp}{filename_parts[1]}"
-                    target_file_path = os.path.join(upload_dir, new_filename)
+                    target_file_path = os.path.join(full_path, new_filename)
                     logger.debug(f"自动重命名为: {new_filename}")
 
                 # 保存文件
@@ -5575,9 +5590,9 @@ async def simple_upload(request: Request, files: List[UploadFile] = File(...)):
 
 # 添加另一个备用上传API路径，确保多种路径都能正常工作
 @app.post("/api/upload")
-async def api_upload(request: Request, files: List[UploadFile] = File(...)):
+async def api_upload(request: Request, files: List[UploadFile] = File(...), path: str = Form("/")):
     """备用上传API路径 - 转发到简化上传API"""
-    return await simple_upload(request, files)
+    return await simple_upload(request, files, path)
 
 # 启动服务器
 def start_server(host_arg=None, port_arg=None, username_arg=None, password_arg=None, debug_arg=None, bot=None):
