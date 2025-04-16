@@ -2631,14 +2631,14 @@ except:
                     github_url = github_url[:-4]
 
                 # 尝试下载main分支
-                zip_url = f"https://ghfast.top/{github_url}/archive/refs/heads/main.zip"
+                zip_url = get_github_url(f"https://github.com/{github_url}/archive/refs/heads/main.zip")
                 logger.info(f"正在从 {zip_url} 下载插件...")
 
                 try:
                     response = requests.get(zip_url, timeout=30)
                     if response.status_code != 200:
                         # 尝试使用master分支
-                        zip_url = f"https://ghfast.top/{github_url}/archive/refs/heads/master.zip"
+                        zip_url = get_github_url(f"https://github.com/{github_url}/archive/refs/heads/master.zip")
                         logger.info(f"尝试从master分支下载: {zip_url}")
                         response = requests.get(zip_url, timeout=30)
 

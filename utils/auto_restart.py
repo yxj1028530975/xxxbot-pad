@@ -73,6 +73,11 @@ class AutoRestartMonitor:
         self.failure_count = 0
         self.last_failure_time = 0
 
+        # 已处理的日志行哈希集合，用于避免重复计数
+        self.processed_log_hashes = set()
+        # 最后一次检查的时间
+        self.last_check_time = 0
+
         logger.info(f"自动重启监控器已初始化，连续失败阈值: {self.failure_count_threshold}")
 
     def _load_restart_records(self):
@@ -198,6 +203,10 @@ class AutoRestartMonitor:
                 return
 
             current_time = time.time()
+            # 更新最后一次检查的时间
+            last_check_time = self.last_check_time
+            self.last_check_time = current_time
+
             status = status_data.get("status", "unknown")
             timestamp = status_data.get("timestamp", 0)
 
@@ -239,10 +248,20 @@ class AutoRestartMonitor:
                                 if len(lines) > 1000:
                                     lines = lines[-1000:]
 
+                                # 记录本次检查中发现的新失败数
+                                new_failures_this_check = 0
+
                                 # 检查最近的日志中是否有“获取新消息失败”的记录
                                 for line in reversed(lines):
                                     # 如果找到“获取新消息失败”的记录
                                     if "获取新消息失败" in line:
+                                        # 计算日志行的哈希值，用于唯一标识
+                                        line_hash = hash(line.strip())
+
+                                        # 如果这一行已经处理过，则跳过
+                                        if line_hash in self.processed_log_hashes:
+                                            continue
+
                                         # 提取时间戳
                                         try:
                                             # XYBot 日志格式可能是多种的，尝试不同的格式
@@ -262,12 +281,16 @@ class AutoRestartMonitor:
 
                                             # 检查这条日志是否在最近的离线阈值时间内
                                             if current_time - log_timestamp < self.offline_threshold:
-                                                # 检查是否是新的失败记录
-                                                if log_timestamp > self.last_failure_time:
+                                                # 检查是否是上次检查之后的新日志
+                                                if log_timestamp > last_check_time:
+                                                    # 将这一行添加到已处理集合
+                                                    self.processed_log_hashes.add(line_hash)
+
                                                     # 更新最后失败时间
                                                     self.last_failure_time = log_timestamp
                                                     # 增加失败计数
                                                     self.failure_count += 1
+                                                    new_failures_this_check += 1
                                                     logger.warning(f"检测到新的'获取新消息失败'记录，当前失败计数: {self.failure_count}/{self.failure_count_threshold}")
 
                                                     # 如果达到失败阈值，标记为掉线
@@ -278,12 +301,25 @@ class AutoRestartMonitor:
                                                         self.failure_count = 0
                                                         # 立即跳出循环，不再检查其他日志
                                                         break
+                                                else:
+                                                    # 将这一行添加到已处理集合，但不增加计数
+                                                    self.processed_log_hashes.add(line_hash)
 
                                                 # 如果已经达到阈值，则跳出循环
                                                 if has_offline_trace:
                                                     break
                                         except Exception as e:
                                             logger.error(f"解析日志时间戳失败: {e}")
+
+                                # 如果本次检查没有发现新的失败，则更新最后失败时间
+                                if new_failures_this_check == 0 and self.failure_count > 0:
+                                    logger.debug(f"本次检查没有发现新的失败记录，当前失败计数保持为: {self.failure_count}")
+
+                                # 定期清理已处理的日志行集合，防止内存泄漏
+                                if len(self.processed_log_hashes) > 10000:  # 如果超过一定数量，清理旧的哈希
+                                    logger.info(f"清理已处理的日志行哈希集合，当前大小: {len(self.processed_log_hashes)}")
+                                    self.processed_log_hashes = set()
+                                    logger.info("已清理已处理的日志行哈希集合")
                     except Exception as e:
                         logger.error(f"检查系统日志时出错: {e}")
 

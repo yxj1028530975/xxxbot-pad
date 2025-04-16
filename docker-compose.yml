@@ -10,9 +10,6 @@ services:
     environment:
       - ADMIN_USERNAME=admin
       - ADMIN_PASSWORD=admin123
-    volumes:
-      - xxxbot-pad:/app # 持久化存储应用数据
-      - redis_data:/var/lib/redis # 持久化存储Redis数据
 
 volumes:
   redis_data:
