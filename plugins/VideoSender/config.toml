@@ -1,7 +1,8 @@
 [VideoSender]
 enable = true
-commands = ["随机视频", "视频目录"]
-ffmpeg_path = "/usr/bin/ffmpeg"
+commands = ["随机视频", "视频目录", "视频", "视频卡片"]
+# Windows系统下的ffmpeg路径，如果已经添加到环境变量中，可以直接使用"ffmpeg"
+ffmpeg_path = "ffmpeg"
 
 [[VideoSender.video_sources]]
 name = "视频"
