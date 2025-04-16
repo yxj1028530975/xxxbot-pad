@@ -9,29 +9,8 @@ redis-server /etc/redis/redis.conf --daemonize yes
 echo "等待系统Redis服务可用..."
 sleep 2
 
-# 确保849/redis目录存在
-if [ -d "/app/849/redis" ]; then
-    # 启动849目录中的Redis服务（端口6378）
-    echo "启动849目录中的Redis服务（端口6378）..."
-    cd /app/849/redis
-    redis-server /app/849/redis/redis.linux.conf --daemonize yes --port 6378
-
-    # 等待849 Redis服务启动
-    echo "等待849 Redis服务可用..."
-    sleep 2
-
-    # 检查Redis服务是否正常启动（使用redis-cli替代nc命令）
-    if redis-cli -p 6378 ping > /dev/null 2>&1; then
-        echo "849 Redis服务（端口6378）已成功启动"
-    else
-        echo "警告：849 Redis服务（端口6378）可能未正常启动"
-    fi
-
-    # 返回应用根目录
-    cd /app
-else
-    echo "警告：849/redis目录不存在，跳过启动849 Redis服务"
-fi
+# 注释：已移除端口6378的Redis服务启动代码，统一使用系统Redis服务（端口6379）
+echo "系统将只使用端口6379的Redis服务"
 
 # 检查并确保3000端口可用
 echo "检查终端服务端口..."
