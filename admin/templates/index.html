@@ -185,13 +185,53 @@
 
                             </div>
                             <!-- 在卡片底部添加按钮 -->
-                            <div class="d-flex gap-2 mt-3 justify-content-center">
-                                <button id="switch-account" class="btn btn-sm btn-outline-primary" title="切换微信账号" style="display: none;" onclick="handleSwitchAccount()">
-                                    <i class="bi bi-arrow-repeat me-1"></i>切换账号
-                                </button>
-                                <button id="edit-config" class="btn btn-sm btn-outline-primary" title="编辑系统配置" style="display: none;" onclick="handleEditConfig()">
-                                    <i class="bi bi-gear-fill me-1"></i>系统配置
-                                </button>
+                            <div class="mt-3">
+                                <!-- 第一排按钮 -->
+                                <div class="row g-2 mb-2">
+                                    <!-- 协议选择按钮 -->
+                                    <div class="col-6">
+                                        <div class="dropdown w-100">
+                                            <button id="protocol-btn" class="btn btn-sm btn-outline-primary dropdown-toggle w-100" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                                                <i class="bi bi-hdd-network me-1"></i><span id="current-protocol">849协议</span>
+                                            </button>
+                                            <ul class="dropdown-menu">
+                                                <li><a class="dropdown-item protocol-option" href="#" data-value="849">849协议</a></li>
+                                                <li><a class="dropdown-item protocol-option" href="#" data-value="855">855协议</a></li>
+                                            </ul>
+                                        </div>
+                                    </div>
+
+                                    <!-- 消息过滤按钮 -->
+                                    <div class="col-6">
+                                        <div class="dropdown w-100">
+                                            <button id="filter-btn" class="btn btn-sm btn-outline-primary dropdown-toggle w-100" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                                                <i class="bi bi-funnel me-1"></i><span id="current-filter">不过滤</span>
+                                            </button>
+                                            <ul class="dropdown-menu">
+                                                <li><a class="dropdown-item filter-option" href="#" data-value="None">不过滤</a></li>
+                                                <li><a class="dropdown-item filter-option" href="#" data-value="Whitelist">白名单模式</a></li>
+                                                <li><a class="dropdown-item filter-option" href="#" data-value="Blacklist">黑名单模式</a></li>
+                                            </ul>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 第二排按钮 -->
+                                <div class="row g-2">
+                                    <!-- 切换账号按钮 -->
+                                    <div class="col-6">
+                                        <button id="switch-account" class="btn btn-sm btn-outline-primary w-100" title="切换微信账号" onclick="handleSwitchAccount()" style="display: inline-block;">
+                                            <i class="bi bi-arrow-repeat me-1"></i>切换账号
+                                        </button>
+                                    </div>
+
+                                    <!-- 系统配置按钮 -->
+                                    <div class="col-6">
+                                        <button id="edit-config" class="btn btn-sm btn-outline-primary w-100" title="编辑系统配置" onclick="handleEditConfig()" style="display: inline-block;">
+                                            <i class="bi bi-gear-fill me-1"></i>系统配置
+                                        </button>
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
@@ -544,6 +584,185 @@
         });
     }
 
+    // 加载系统配置
+    function loadSystemConfig() {
+        fetch('/api/files/read?path=main_config.toml')
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('服务器响应状态码: ' + response.status);
+                }
+                return response.json();
+            })
+            .then(data => {
+                if (data.success && data.content) {
+                    // 解析TOML配置
+                    const configText = data.content;
+
+                    // 提取协议版本
+                    const protocolMatch = configText.match(/version\s*=\s*"(\d+)"/i);
+                    const protocolVersion = protocolMatch ? protocolMatch[1] : '849';
+
+                    // 提取消息过滤模式
+                    const filterModeMatch = configText.match(/ignore-mode\s*=\s*"([^"]+)"/i);
+                    const filterMode = filterModeMatch ? filterModeMatch[1] : 'None';
+
+                    console.log('当前协议版本:', protocolVersion);
+                    console.log('当前消息过滤模式:', filterMode);
+
+                    // 存储到全局变量
+                    window.currentConfig = {
+                        protocolVersion,
+                        filterMode,
+                        configText
+                    };
+
+                    // 更新UI显示
+                    updateProtocolUI(protocolVersion);
+                    updateFilterModeUI(filterMode);
+                } else {
+                    throw new Error(data.error || '加载配置文件失败');
+                }
+            })
+            .catch(error => {
+                console.error('加载系统配置失败:', error);
+                showToast('错误', '加载系统配置失败: ' + error.message, 'danger');
+            });
+    }
+
+    // 更新协议版本UI
+    function updateProtocolUI(version) {
+        const protocolBtn = document.getElementById('current-protocol');
+        if (protocolBtn) {
+            protocolBtn.textContent = version + '协议';
+        }
+    }
+
+    // 更新消息过滤模式UI
+    function updateFilterModeUI(mode) {
+        const filterBtn = document.getElementById('current-filter');
+        if (filterBtn) {
+            let displayText = '不过滤';
+            if (mode === 'Whitelist') {
+                displayText = '白名单模式';
+            } else if (mode === 'Blacklist') {
+                displayText = '黑名单模式';
+            }
+            filterBtn.textContent = displayText;
+        }
+    }
+
+    // 保存设置
+    function saveSettings(protocolVersion, filterMode) {
+        // 如果没有当前配置，先加载
+        if (!window.currentConfig) {
+            loadSystemConfig();
+            setTimeout(() => saveSettings(protocolVersion, filterMode), 1000);
+            return;
+        }
+
+        let configText = window.currentConfig.configText;
+
+        // 替换协议版本
+        if (protocolVersion) {
+            configText = configText.replace(/version\s*=\s*"\d+"/i, `version = "${protocolVersion}"`);
+        }
+
+        // 替换消息过滤模式
+        if (filterMode) {
+            configText = configText.replace(/ignore-mode\s*=\s*"[^"]+"/i, `ignore-mode = "${filterMode}"`);
+        }
+
+        // 发送保存请求
+        fetch('/api/files/write', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                path: 'main_config.toml',
+                content: configText
+            }),
+            credentials: 'include'
+        })
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('服务器响应状态码: ' + response.status);
+            }
+            return response.json();
+        })
+        .then(data => {
+            if (data.success) {
+                // 更新全局变量
+                if (protocolVersion) {
+                    window.currentConfig.protocolVersion = protocolVersion;
+                }
+                if (filterMode) {
+                    window.currentConfig.filterMode = filterMode;
+                }
+                window.currentConfig.configText = configText;
+
+                // 显示成功提示
+                showToast('成功', '设置已保存，需要重启系统生效', 'success');
+
+                // 询问是否重启系统
+                if (confirm('设置已保存，需要重启系统才能生效。\n\n是否立即重启系统？')) {
+                    restartSystem();
+                }
+            } else {
+                showToast('错误', data.error || '保存设置失败', 'danger');
+            }
+        })
+        .catch(error => {
+            console.error('保存设置失败:', error);
+            showToast('错误', '保存设置失败: ' + error.message, 'danger');
+        });
+    }
+
+    // 重启系统
+    function restartSystem() {
+        // 显示重启进度模态框
+        const loadingDiv = document.createElement('div');
+        loadingDiv.className = 'position-fixed top-0 start-0 w-100 h-100 d-flex justify-content-center align-items-center bg-dark bg-opacity-75';
+        loadingDiv.style.zIndex = '9999';
+        loadingDiv.innerHTML = `
+            <div class="bg-white p-4 rounded shadow-lg text-center">
+                <h4>系统重启中</h4>
+                <p class="mb-3">正在重启系统，请稍候...</p>
+                <div class="progress mb-3">
+                    <div id="restart-progress" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>
+                </div>
+                <p class="small text-muted">完成后将自动刷新页面</p>
+            </div>
+        `;
+        document.body.appendChild(loadingDiv);
+
+        // 进度条动画
+        const progressBar = document.getElementById('restart-progress');
+        let progress = 0;
+        const progressInterval = setInterval(() => {
+            progress += 2;
+            if (progress > 100) {
+                clearInterval(progressInterval);
+                // 重启完成，刷新页面
+                window.location.reload();
+            } else {
+                progressBar.style.width = `${progress}%`;
+            }
+        }, 200); // 20秒完成进度条
+
+        // 发送重启系统请求
+        fetch('/api/system/restart', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            credentials: 'include'
+        }).catch(error => {
+            console.error('重启系统失败:', error);
+            // 即使请求失败也继续显示进度条，因为服务器可能已经在重启中
+        });
+    }
+
     document.addEventListener('DOMContentLoaded', function() {
         const statusDisplay = document.getElementById('bot-status-display');
         const statusDot = document.getElementById('status-dot');
@@ -557,6 +776,33 @@
         const refreshQrcodeBtn = document.getElementById('refresh-qrcode');
         const qrcodeUrlInput = document.getElementById('qrcode-url');
         const loadQrcodeBtn = document.getElementById('load-qrcode');
+
+        // 加载系统配置
+        loadSystemConfig();
+
+        // 确保切换账号和系统配置按钮始终显示
+        document.getElementById('switch-account').style.display = 'inline-block';
+        document.getElementById('edit-config').style.display = 'inline-block';
+
+        // 协议选择事件委托
+        document.addEventListener('click', function(event) {
+            if (event.target.classList.contains('protocol-option')) {
+                event.preventDefault();
+                const protocolVersion = event.target.getAttribute('data-value');
+                updateProtocolUI(protocolVersion);
+                saveSettings(protocolVersion, null);
+            }
+        });
+
+        // 消息过滤选择事件委托
+        document.addEventListener('click', function(event) {
+            if (event.target.classList.contains('filter-option')) {
+                event.preventDefault();
+                const filterMode = event.target.getAttribute('data-value');
+                updateFilterModeUI(filterMode);
+                saveSettings(null, filterMode);
+            }
+        });
 
         // 设置进度条宽度
         function setProgressBars() {
@@ -589,104 +835,10 @@
                     statusDisplay.classList.add('online');
                     statusDescription.textContent = status === 'ready' ? '机器人已准备就绪' : '机器人已登录并正常运行';
                     // qrcodeSection.style.display = 'none'; // 注释掉，不再显示二维码区域
-                    // 显示机器人信息和切换账号按钮
+                    // 显示机器人信息
                     document.getElementById('bot-info').style.display = 'block';
-                    const switchBtn = document.getElementById('switch-account');
-                    switchBtn.style.display = 'block';
 
-                    // 显示系统配置按钮
-                    const editConfigBtn = document.getElementById('edit-config');
-                    if (editConfigBtn) {
-                        editConfigBtn.style.display = 'block';
-                        console.log('显示系统配置按钮');
-                    }
 
-                    // 确保切换账号按钮有事件监听器
-                    if (!switchBtn.hasAttribute('data-event-attached')) {
-                        console.log('为切换账号按钮添加点击事件');
-                        switchBtn.addEventListener('click', function() {
-                            console.log('切换账号按钮被点击');
-                            // 显示确认对话框
-                            if (confirm('确定要切换微信账号吗？\n\n这将删除当前账号的登录信息，并需要重新扫码登录。')) {
-                                console.log('用户确认切换账号，发送请求');
-                                // 显示加载状态
-                                switchBtn.disabled = true;
-                                switchBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>切换中...';
-
-                                // 发送请求删除 robot_stat.json 文件
-                                // 使用当前主机名和端口构建正确的URL
-                                const apiUrl = window.location.origin + '/api/switch_account';
-                                console.log('发送切换账号请求到:', apiUrl);
-
-                                fetch(apiUrl, {
-                                    method: 'POST',
-                                    headers: {
-                                        'Content-Type': 'application/json'
-                                    },
-                                    credentials: 'include'  // 确保发送认证Cookie
-                                })
-                                .then(response => {
-                                    console.log('收到切换账号响应:', response);
-                                    if (!response.ok) {
-                                        throw new Error('API响应状态码: ' + response.status);
-                                    }
-                                    return response.json();
-                                })
-                                .then(data => {
-                                    console.log('切换账号响应数据:', data);
-                                    if (data.success) {
-                                        // 成功切换账号
-                                        showToast('成功', '已切换账号，系统正在重启...', 'success');
-
-                                        // 显示加载中的提示
-                                        const loadingDiv = document.createElement('div');
-                                        loadingDiv.className = 'position-fixed top-0 start-0 w-100 h-100 d-flex justify-content-center align-items-center bg-dark bg-opacity-75';
-                                        loadingDiv.style.zIndex = '9999';
-                                        loadingDiv.innerHTML = `
-                                            <div class="card shadow p-4 text-center">
-                                                <div class="spinner-border text-primary mb-3" role="status" style="width: 3rem; height: 3rem;">
-                                                    <span class="visually-hidden">加载中...</span>
-                                                </div>
-                                                <h5 class="mb-2">系统正在重启</h5>
-                                                <p class="text-muted mb-2">请稍候，这可能需要几秒钟时间...</p>
-                                                <div class="progress mb-3">
-                                                    <div id="restart-progress" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>
-                                                </div>
-                                                <p class="small text-muted">重启完成后将自动跳转到登录页面</p>
-                                            </div>
-                                        `;
-                                        document.body.appendChild(loadingDiv);
-
-                                        // 进度条动画
-                                        const progressBar = document.getElementById('restart-progress');
-                                        let progress = 0;
-                                        const progressInterval = setInterval(() => {
-                                            progress += 2;
-                                            if (progress > 100) {
-                                                clearInterval(progressInterval);
-                                                // 重启完成，跳转到登录页面
-                                                window.location.href = '/qrcode';
-                                            } else {
-                                                progressBar.style.width = `${progress}%`;
-                                            }
-                                        }, 200); // 20秒完成进度条
-                                    } else {
-                                        // 切换账号失败
-                                        switchBtn.disabled = false;
-                                        switchBtn.innerHTML = '<i class="bi bi-arrow-repeat me-1"></i>切换账号';
-                                        showToast('错误', data.error || '切换账号失败', 'danger');
-                                    }
-                                })
-                                .catch(error => {
-                                    console.error('切换账号失败:', error);
-                                    switchBtn.disabled = false;
-                                    switchBtn.innerHTML = '<i class="bi bi-arrow-repeat me-1"></i>切换账号';
-                                    showToast('错误', '切换账号请求失败: ' + error.message, 'danger');
-                                });
-                            }
-                        });
-                        switchBtn.setAttribute('data-event-attached', 'true');
-                    }
                     break;
                 case 'offline':
                     statusDot.classList.add('offline');
@@ -694,8 +846,9 @@
                     statusDescription.textContent = '机器人目前离线，请检查连接';
                     // qrcodeSection.style.display = 'none'; // 注释掉，不再显示二维码区域
                     document.getElementById('bot-info').style.display = 'none';
-                    document.getElementById('switch-account').style.display = 'none';
-                    document.getElementById('edit-config').style.display = 'none';
+                    // 在离线状态下也显示切换账号和系统配置按钮
+                    document.getElementById('switch-account').style.display = 'inline-block';
+                    document.getElementById('edit-config').style.display = 'inline-block';
                     break;
                 case 'waiting_login':
                     statusDot.classList.add('waiting');
@@ -704,8 +857,9 @@
                     // qrcodeSection.style.display = 'block'; // 不再显示二维码区域
                     // loadQRCode(); // 不再加载二维码
                     document.getElementById('bot-info').style.display = 'none';
-                    document.getElementById('switch-account').style.display = 'none';
-                    document.getElementById('edit-config').style.display = 'none';
+                    // 在未登录状态下也显示切换账号和系统配置按钮
+                    document.getElementById('switch-account').style.display = 'inline-block';
+                    document.getElementById('edit-config').style.display = 'inline-block';
 
                     break;
                 default:
@@ -714,7 +868,9 @@
                     statusDescription.textContent = '未知状态: ' + status;
                     // qrcodeSection.style.display = 'none'; // 注释掉，不再显示二维码区域
                     document.getElementById('bot-info').style.display = 'none';
-                    document.getElementById('switch-account').style.display = 'none';
+                    // 在未知状态下也显示切换账号和系统配置按钮
+                    document.getElementById('switch-account').style.display = 'inline-block';
+                    document.getElementById('edit-config').style.display = 'inline-block';
             }
 
             // 动画效果

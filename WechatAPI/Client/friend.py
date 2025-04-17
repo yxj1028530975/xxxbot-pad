@@ -126,6 +126,37 @@ class FriendMixin(WechatAPIClientBase):
             else:
                 self.error_handler(json_resp)
 
+    async def get_total_contract_list(self, wx_seq: int = 0, chatroom_seq: int = 0, offset: int = 0, limit: int = 0) -> dict:
+        """获取全部通讯录好友[全新API]
+
+        Args:
+            wx_seq: 联系人序列，没有的情况下请填写0
+            chatroom_seq: 群聊序列，没有的情况下请填写0
+            offset: 偏移量
+            limit: 限制数量
+
+        Returns:
+            dict: 联系人列表数据
+        """
+        if not self.wxid:
+            raise UserLoggedOut("请先登录")
+
+        async with aiohttp.ClientSession() as session:
+            json_param = {
+                "Wxid": self.wxid,
+                "CurrentWxcontactSeq": wx_seq,
+                "CurrentChatRoomContactSeq": chatroom_seq,
+                "Offset": offset,
+                "Limit": limit
+            }
+            response = await session.post(f'http://{self.ip}:{self.port}/VXAPI/Friend/GetTotalContractList', json=json_param)
+            json_resp = await response.json()
+
+            if json_resp.get("Success"):
+                return json_resp.get("Data")
+            else:
+                self.error_handler(json_resp)
+
     async def get_nickname(self, wxid: Union[str, list[str]]) -> Union[str, list[str]]:
         """获取用户昵称
 

@@ -24,6 +24,7 @@ async def restart_system():
         # 等待1秒让响应先返回
         await asyncio.sleep(1)
         logger.warning("正在重启系统...")
+        logger.warning("restart_task函数正在执行，这条日志应该出现在日志文件中")
 
         # 发送重启通知
         try:
@@ -166,8 +167,15 @@ except:
             sys.exit(0)
 
     # 启动后台任务
-    asyncio.create_task(restart_task())
-    return True
+    try:
+        task = asyncio.create_task(restart_task())
+        logger.warning(f"创建重启任务成功: {task}")
+        return True
+    except Exception as e:
+        logger.error(f"创建重启任务失败: {e}")
+        # 如果创建任务失败，直接执行重启逻辑
+        await restart_task()
+        return True
 
 # API: 重启容器
 @router.post("/system/restart", response_class=JSONResponse)

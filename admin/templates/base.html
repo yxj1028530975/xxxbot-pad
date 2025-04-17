@@ -124,6 +124,154 @@
         .animate__rotateIn {
             animation: spin 1s linear infinite;
         }
+
+        /* 更新内容样式 */
+        .markdown-body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+            line-height: 1.6;
+            color: #24292e;
+        }
+
+        .markdown-body h1 {
+            font-size: 1.8rem;
+            margin-top: 1.5rem;
+            margin-bottom: 1rem;
+            font-weight: 600;
+            color: #0d6efd;
+        }
+
+        .markdown-body h2 {
+            font-size: 1.5rem;
+            margin-top: 1.5rem;
+            margin-bottom: 1rem;
+            font-weight: 600;
+            border-bottom: 1px solid #eaecef;
+            padding-bottom: 0.5rem;
+            color: #0d6efd;
+        }
+
+        .markdown-body h3 {
+            font-size: 1.2rem;
+            margin-top: 1.2rem;
+            margin-bottom: 0.8rem;
+            font-weight: 600;
+            color: #0d6efd;
+        }
+
+        .markdown-body p {
+            margin-bottom: 1rem;
+            line-height: 1.7;
+        }
+
+        .markdown-body ul {
+            margin-bottom: 1rem;
+            padding-left: 1.5rem;
+        }
+
+        .markdown-body li {
+            margin-bottom: 0.5rem;
+            position: relative;
+            list-style-type: none;
+        }
+
+        .markdown-body li:before {
+            content: '•';
+            color: #0d6efd;
+            font-weight: bold;
+            position: absolute;
+            left: -1.2rem;
+        }
+
+        .markdown-body br + li:before {
+            content: '•';
+            color: #0d6efd;
+            font-weight: bold;
+            display: inline-block;
+            margin-right: 0.5rem;
+        }
+
+        /* 更新弹窗颜色和样式 */
+        .rounded-pill {
+            border-radius: 50rem !important;
+        }
+
+        /* 添加渐变效果 */
+        .bg-primary.bg-gradient {
+            background-image: linear-gradient(to right, #0d6efd, #0a58ca) !important;
+        }
+
+        /* 更新列表样式 */
+        .update-list {
+            padding-left: 0.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .update-list li {
+            margin-bottom: 0.7rem;
+            padding-left: 1.5rem;
+            position: relative;
+        }
+
+        .update-list li:before {
+            content: '•';
+            color: #0d6efd;
+            font-weight: bold;
+            position: absolute;
+            left: 0;
+            font-size: 1.2rem;
+        }
+
+        .update-content h1:first-child,
+        .update-content h2:first-child,
+        .update-content h3:first-child {
+            margin-top: 0 !important;
+        }
+
+        /* 添加动画效果 */
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .modal-content {
+            animation: fadeIn 0.3s ease-out;
+        }
+
+        /* 弹窗居中样式 */
+        .modal-dialog-centered {
+            display: flex;
+            align-items: center;
+            min-height: calc(100% - 3.5rem);
+        }
+
+        /* 确保弹窗在显示时居中 */
+        .modal.show {
+            display: flex !important;
+            align-items: center;
+            padding-top: 0 !important;
+        }
+
+        /* 确保弹窗内容完全可见 */
+        .modal-dialog {
+            max-height: 90vh;
+            margin-top: 0;
+            margin-bottom: 0;
+        }
+
+        .modal-body {
+            max-height: calc(90vh - 120px);
+            overflow-y: auto;
+        }
+
+        /* 按钮悬停效果 */
+        .btn-primary {
+            transition: all 0.2s ease;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(13, 110, 253, 0.25);
+        }
     </style>
 
     {% block extra_css %}{% endblock %}
@@ -222,6 +370,7 @@
             <div class="container-fluid">
                 <div class="d-flex align-items-center">
                     <h1 class="h4 mb-0 text-gray-800">{% block page_title %}控制面板{% endblock %}</h1>
+                    <div class="ms-3">{% block page_actions %}{% endblock %}</div>
                 </div>
 
                 <div class="ms-auto d-flex align-items-center">
@@ -240,8 +389,8 @@
                                 <span class="badge bg-success shadow-sm" data-bs-toggle="tooltip" title="{{ update_description }}" style="font-size: 0.9rem;" id="update-badge">
                                     <i class="bi bi-arrow-up-circle-fill me-1"></i>新版本: <span id="latest-version">{{ latest_version }}</span>
                                 </span>
-                                <button id="update-now-btn" class="btn btn-success btn-sm ms-1 shadow-sm" onclick="updateNow()" data-bs-toggle="tooltip" title="立即更新到最新版本">
-                                    <i class="bi bi-cloud-download"></i> 立即更新
+                                <button id="update-now-btn" class="btn btn-outline-success btn-sm ms-1 shadow-sm" onclick="updateNow()" data-bs-toggle="tooltip" title="立即更新到最新版本" style="padding: 0.25rem 0.5rem;">
+                                    <i class="bi bi-cloud-download"></i>
                                 </button>
                             </div>
                         </div>
@@ -635,8 +784,12 @@
                         updateContainer.setAttribute('style', 'display: flex !important;');
                         updateContainer.classList.add('d-flex');
 
-                        // 显示消息（如果是手动检查）
+                        // 显示更新内容弹窗
+                        showUpdateContentModal(data.latest_version, data.update_description);
+
+                        // 如果是手动检查，清除弹窗显示状态，以便下次自动显示
                         if (isManualCheck) {
+                            localStorage.removeItem('updateModalShown');
                             showToast('发现新版本', `有新版本可用: ${data.latest_version}`, 'success');
                         }
 
@@ -684,6 +837,165 @@
             });
         }
 
+        // 立即更新函数
+        function updateNow() {
+            // 获取更新URL
+            const updateUrl = document.getElementById('update-badge').getAttribute('href');
+            if (updateUrl && updateUrl !== '#') {
+                // 发送更新请求
+                fetch('/update', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': getCookie('csrftoken')
+                    },
+                    body: JSON.stringify({
+                        update_url: updateUrl
+                    })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        showToast('更新成功', '系统已开始更新，请稍后...', 'success');
+                        // 关闭模态框
+                        const modal = bootstrap.Modal.getInstance(document.getElementById('update-content-modal'));
+                        if (modal) {
+                            modal.hide();
+                        }
+                    } else {
+                        showToast('更新失败', data.message || '更新过程中出现错误', 'error');
+                    }
+                })
+                .catch(error => {
+                    console.error('更新请求失败:', error);
+                    showToast('更新失败', '请求发送失败', 'error');
+                });
+            } else {
+                showToast('更新失败', '无效的更新地址', 'error');
+            }
+        }
+
+        // 显示更新内容弹窗函数
+        function showUpdateContentModal(latestVersion, updateDescription) {
+            // 更新模态框中的版本信息
+            document.getElementById('modal-current-version').textContent = document.getElementById('current-version').innerText;
+            document.getElementById('modal-latest-version').textContent = latestVersion;
+
+            // 处理更新内容
+            const updateContentElement = document.getElementById('update-description-content');
+
+            // 将更新描述转换为HTML
+            if (updateDescription) {
+                // 简化处理，避免复杂的正则表达式
+                let htmlContent = '';
+
+                // 将更新描述按行分割
+                const lines = updateDescription.split('\n');
+                let inList = false;
+                let inSection = false;
+
+                for (let i = 0; i < lines.length; i++) {
+                    const line = lines[i].trim();
+
+                    // 空行处理
+                    if (line === '') {
+                        if (inList) {
+                            htmlContent += '</ul>';
+                            inList = false;
+                        }
+                        if (inSection) {
+                            // 不添加额外的空行，保持段落结构
+                        } else {
+                            htmlContent += '<div class="my-3"></div>'; // 添加间距而不是空行
+                            inSection = true;
+                        }
+                        continue;
+                    } else {
+                        inSection = false;
+                    }
+
+                    // 标题处理
+                    if (line.startsWith('# ')) {
+                        if (inList) {
+                            htmlContent += '</ul>';
+                            inList = false;
+                        }
+                        htmlContent += `<h1 class="mt-4">${line.substring(2)}</h1>`;
+                    } else if (line.startsWith('## ')) {
+                        if (inList) {
+                            htmlContent += '</ul>';
+                            inList = false;
+                        }
+                        htmlContent += `<h2 class="mt-4">${line.substring(3)}</h2>`;
+                    } else if (line.startsWith('### ')) {
+                        if (inList) {
+                            htmlContent += '</ul>';
+                            inList = false;
+                        }
+                        htmlContent += `<h3 class="mt-3">${line.substring(4)}</h3>`;
+                    }
+                    // 列表项处理
+                    else if (line.startsWith('- ')) {
+                        if (!inList) {
+                            htmlContent += '<ul class="update-list">';
+                            inList = true;
+                        }
+                        htmlContent += `<li>${line.substring(2)}</li>`;
+                    }
+                    // 数字列表处理
+                    else if (/^\d+\.\s/.test(line)) {
+                        const textContent = line.replace(/^\d+\.\s/, '');
+                        if (!inList) {
+                            htmlContent += '<ul class="update-list">';
+                            inList = true;
+                        }
+                        htmlContent += `<li>${textContent}</li>`;
+                    }
+                    // 普通文本
+                    else {
+                        if (inList) {
+                            htmlContent += '</ul>';
+                            inList = false;
+                        }
+                        htmlContent += `<p>${line}</p>`;
+                    }
+                }
+
+                // 确保列表正确关闭
+                if (inList) {
+                    htmlContent += '</ul>';
+                }
+
+                // 添加额外的样式类
+                htmlContent = `<div class="update-content">${htmlContent}</div>`;
+
+                updateContentElement.innerHTML = htmlContent;
+            } else {
+                updateContentElement.innerHTML = '<div class="text-center py-4"><i class="bi bi-info-circle text-muted fs-1 mb-3"></i><p class="text-muted">暂无详细的更新内容描述</p></div>';
+            }
+
+            // 显示模态框
+            const modal = new bootstrap.Modal(document.getElementById('update-content-modal'));
+            modal.show();
+        }
+
+        // 获取Cookie函数
+        function getCookie(name) {
+            let cookieValue = null;
+            if (document.cookie && document.cookie !== '') {
+                const cookies = document.cookie.split(';');
+                for (let i = 0; i < cookies.length; i++) {
+                    const cookie = cookies[i].trim();
+                    // 判断这个cookie的名称是否是我们想要的
+                    if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                        cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                        break;
+                    }
+                }
+            }
+            return cookieValue;
+        }
+
         // 页面加载完成后执行
         document.addEventListener('DOMContentLoaded', function() {
             // 初始化工具提示
@@ -722,6 +1034,22 @@
                         updateContainer.removeAttribute('style');
                         updateContainer.setAttribute('style', 'display: flex !important;');
                         updateContainer.classList.add('d-flex');
+
+                        // 显示更新内容弹窗，延迟3秒显示，确保页面已完全加载
+                        // 并且仅在首次加载时显示一次
+                        if (!localStorage.getItem('updateModalShown')) {
+                            setTimeout(() => {
+                                // 检查必要的元素是否存在
+                                const modalElement = document.getElementById('update-content-modal');
+                                const currentVersionElement = document.getElementById('current-version');
+
+                                if (modalElement && currentVersionElement) {
+                                    showUpdateContentModal(updateInfo.latest_version, updateInfo.update_description);
+                                    // 记录已经显示过弹窗
+                                    localStorage.setItem('updateModalShown', 'true');
+                                }
+                            }, 3000);
+                        }
                     } else {
                         // 如果版本相同，清除存储的更新信息
                         localStorage.removeItem('updateInfo');
@@ -737,6 +1065,9 @@
             setInterval(() => {
                 checkForUpdates().catch(error => console.error('自动检查更新失败:', error));
             }, 3600000); // 3600000毫秒 = 1小时
+
+            // 添加更新按钮的事件监听器
+            document.getElementById('modal-update-now-btn').addEventListener('click', updateNow);
         });
     </script>
 
@@ -745,5 +1076,57 @@
 
     <!-- 模态框容器 -->
     {% block modals %}{% endblock %}
+
+    <!-- 更新内容弹窗 -->
+    <div class="modal fade" id="update-content-modal" tabindex="-1" aria-labelledby="updateContentModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-lg" style="max-width: 650px; margin: 0 auto; transform: translateY(-5vh);">
+            <div class="modal-content shadow-lg border-0">
+                <div class="modal-header bg-light text-dark">
+                    <h5 class="modal-title" id="updateContentModalLabel">
+                        <i class="bi bi-arrow-up-circle-fill me-2 text-primary"></i>系统更新提示
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+                </div>
+                <div class="modal-body p-4" style="max-height: 60vh; overflow-y: auto;">
+                    <div class="d-flex align-items-center justify-content-center mb-4">
+                        <div class="me-4">
+                            <span class="badge bg-secondary fs-6 p-2 px-3 rounded-pill">
+                                <i class="bi bi-code-slash me-1"></i>当前版本: <span id="modal-current-version" class="fw-bold">{{ version }}</span>
+                            </span>
+                        </div>
+                        <div class="d-flex align-items-center">
+                            <div class="arrow-right me-2">
+                                <i class="bi bi-arrow-right fs-4 text-muted"></i>
+                            </div>
+                            <span class="badge bg-primary fs-6 p-2 px-3 rounded-pill">
+                                <i class="bi bi-arrow-up-circle-fill me-1"></i>新版本: <span id="modal-latest-version" class="fw-bold">{{ latest_version }}</span>
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="card mb-3 border-0 shadow-sm">
+                        <div class="card-header bg-light">
+                            <h5 class="mb-0 d-flex align-items-center">
+                                <i class="bi bi-list-check me-2 text-primary"></i>更新内容
+                            </h5>
+                        </div>
+                        <div class="card-body">
+                            <div id="update-description-content" class="markdown-body">
+                                <!-- 更新内容将通过JavaScript动态加载 -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer justify-content-end border-0 pt-0 pb-3">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal" style="padding: 0.375rem 0.75rem;">
+                        <i class="bi bi-x-circle me-1"></i>关闭
+                    </button>
+                    <button type="button" class="btn btn-outline-primary" id="modal-update-now-btn" style="padding: 0.375rem 0.75rem;">
+                        <i class="bi bi-cloud-download me-1"></i>立即更新
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
 </body>
 </html>

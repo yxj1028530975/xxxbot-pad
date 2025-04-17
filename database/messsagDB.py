@@ -62,10 +62,10 @@ class MessageDB(metaclass=Singleton):
     @validate_arguments(config=dict(arbitrary_types_allowed=True))
     async def save_message(self,
                            msg_id: int,
-                           sender_wxid: str,
-                           from_wxid: str,
-                           msg_type: int,
-                           content: str,
+                           sender_wxid: str = "",
+                           from_wxid: str = "",
+                           msg_type: int = 0,
+                           content: str = "",
                            is_group: bool = False) -> bool:
         """异步保存消息到数据库"""
         async with self._async_session_factory() as session:

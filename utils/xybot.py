@@ -1,12 +1,14 @@
 import tomllib
 import xml.etree.ElementTree as ET
 from typing import Dict, Any
+import asyncio
 
 from loguru import logger
 
 from WechatAPI import WechatAPIClient
 from WechatAPI.Client.protect import protector
 from database.messsagDB import MessageDB
+from database.contacts_db import update_contact_in_db, get_contact_from_db
 from utils.event_manager import EventManager
 
 
@@ -83,20 +85,258 @@ class XYBot:
         """
         return self.wxid is not None
 
+    async def update_contact_info(self, wxid: str):
+        """更新联系人信息
+
+        Args:
+            wxid: 联系人的wxid
+        """
+        try:
+            # 先检查数据库中是否已有该联系人的信息
+            existing_contact = get_contact_from_db(wxid)
+
+            # 如果数据库中没有该联系人的信息，或者信息不完整，则从 API 获取
+            if not existing_contact or not existing_contact.get('nickname'):
+                # 从 API 获取联系人信息
+                try:
+                    # 如果是群聊，不获取详细信息
+                    if wxid.endswith("@chatroom"):
+                        contact_info = {
+                            'wxid': wxid,
+                            'nickname': wxid,
+                            'type': 'group'
+                        }
+                        # 更新到数据库
+                        update_contact_in_db(contact_info)
+                        logger.debug(f"已在消息处理中更新群聊 {wxid} 的基本信息")
+                    else:
+                        # 获取联系人详细信息
+                        logger.debug(f"开始获取联系人 {wxid} 的详细信息")
+                        try:
+                            detail = await self.bot.get_contract_detail(wxid)
+                            logger.debug(f"获取到联系人 {wxid} 的详细信息: {detail}")
+
+                            if detail:
+                                # 处理返回结果
+                                if isinstance(detail, list) and len(detail) > 0:
+                                    detail_item = detail[0]
+                                    logger.debug(f"联系人 {wxid} 详情项类型: {type(detail_item)}")
+
+                                    if isinstance(detail_item, dict):
+                                        # 记录详细的字段信息，帮助调试
+                                        logger.debug(f"联系人 {wxid} 详情字段: {list(detail_item.keys())}")
+
+                                        # 检查nickname字段的类型和值
+                                        nickname_value = detail_item.get('nickname')
+                                        if nickname_value is None:
+                                            # 尝试其他可能的字段名
+                                            nickname_value = detail_item.get('NickName')
+                                            if nickname_value is None:
+                                                logger.warning(f"联系人 {wxid} 没有找到nickname或NickName字段")
+                                            else:
+                                                logger.debug(f"联系人 {wxid} 使用NickName字段: {nickname_value}")
+                                        else:
+                                            logger.debug(f"联系人 {wxid} 使用nickname字段: {nickname_value}")
+
+                                        # 如果nickname是字典类型，尝试获取其中的string字段
+                                        if isinstance(nickname_value, dict):
+                                            logger.debug(f"联系人 {wxid} 的nickname是字典类型: {nickname_value}")
+                                            nickname_string = nickname_value.get('string')
+                                            if nickname_string:
+                                                nickname_value = nickname_string
+                                                logger.debug(f"从字典中提取nickname.string: {nickname_string}")
+
+                                        # 处理头像字段 - 优先使用BigHeadImgUrl或SmallHeadImgUrl
+                                        avatar_value = detail_item.get('BigHeadImgUrl', '')
+                                        if not avatar_value:
+                                            avatar_value = detail_item.get('SmallHeadImgUrl', '')
+                                        if not avatar_value:
+                                            # 如果没有直接的URL，尝试使用avatar字段
+                                            avatar_value = detail_item.get('avatar', '')
+                                            if isinstance(avatar_value, dict):
+                                                avatar_value = avatar_value.get('string', '')
+
+                                        logger.debug(f"联系人 {wxid} 的头像地址: {avatar_value}")
+
+                                        # 处理备注字段
+                                        remark_value = detail_item.get('remark', '')
+                                        if remark_value is None or not remark_value:
+                                            remark_value = detail_item.get('Remark', '')
+                                        if isinstance(remark_value, dict):
+                                            remark_value = remark_value.get('string', '')
+
+                                        # 处理微信号字段
+                                        alias_value = detail_item.get('alias', '')
+                                        if alias_value is None or not alias_value:
+                                            alias_value = detail_item.get('Alias', '')
+                                        if isinstance(alias_value, dict):
+                                            alias_value = alias_value.get('string', '')
+
+                                        # 构建联系人信息
+                                        contact_info = {
+                                            'wxid': wxid,
+                                            'nickname': nickname_value if nickname_value else wxid,
+                                            'avatar': avatar_value,
+                                            'remark': remark_value,
+                                            'alias': alias_value
+                                        }
+                                        logger.debug(f"解析联系人 {wxid} 详情成功: {contact_info}")
+                                    else:
+                                        logger.warning(f"联系人 {wxid} 详情格式不是字典: {detail_item}")
+                                        # 创建基本联系人信息
+                                        contact_info = {
+                                            'wxid': wxid,
+                                            'nickname': wxid,
+                                            'type': 'friend'
+                                        }
+                                elif isinstance(detail, dict):
+                                    # 记录详细的字段信息，帮助调试
+                                    logger.debug(f"联系人 {wxid} 详情字段(字典格式): {list(detail.keys())}")
+
+                                    # 检查nickname字段的类型和值
+                                    nickname_value = detail.get('nickname')
+                                    if nickname_value is None:
+                                        # 尝试其他可能的字段名
+                                        nickname_value = detail.get('NickName')
+                                        if nickname_value is None:
+                                            logger.warning(f"联系人 {wxid} 没有找到nickname或NickName字段")
+                                        else:
+                                            logger.debug(f"联系人 {wxid} 使用NickName字段: {nickname_value}")
+                                    else:
+                                        logger.debug(f"联系人 {wxid} 使用nickname字段: {nickname_value}")
+
+                                    # 如果nickname是字典类型，尝试获取其中的string字段
+                                    if isinstance(nickname_value, dict):
+                                        logger.debug(f"联系人 {wxid} 的nickname是字典类型: {nickname_value}")
+                                        nickname_string = nickname_value.get('string')
+                                        if nickname_string:
+                                            nickname_value = nickname_string
+                                            logger.debug(f"从字典中提取nickname.string: {nickname_string}")
+
+                                    # 处理头像字段 - 优先使用BigHeadImgUrl或SmallHeadImgUrl
+                                    avatar_value = detail.get('BigHeadImgUrl', '')
+                                    if not avatar_value:
+                                        avatar_value = detail.get('SmallHeadImgUrl', '')
+                                    if not avatar_value:
+                                        # 如果没有直接的URL，尝试使用avatar字段
+                                        avatar_value = detail.get('avatar', '')
+                                        if isinstance(avatar_value, dict):
+                                            avatar_value = avatar_value.get('string', '')
+
+                                    logger.debug(f"联系人 {wxid} 的头像地址(字典格式): {avatar_value}")
+
+                                    # 处理备注字段
+                                    remark_value = detail.get('remark', '')
+                                    if remark_value is None or not remark_value:
+                                        remark_value = detail.get('Remark', '')
+                                    if isinstance(remark_value, dict):
+                                        remark_value = remark_value.get('string', '')
+
+                                    # 处理微信号字段
+                                    alias_value = detail.get('alias', '')
+                                    if alias_value is None or not alias_value:
+                                        alias_value = detail.get('Alias', '')
+                                    if isinstance(alias_value, dict):
+                                        alias_value = alias_value.get('string', '')
+
+                                    # 构建联系人信息
+                                    contact_info = {
+                                        'wxid': wxid,
+                                        'nickname': nickname_value if nickname_value else wxid,
+                                        'avatar': avatar_value,
+                                        'remark': remark_value,
+                                        'alias': alias_value
+                                    }
+                                    logger.debug(f"解析联系人 {wxid} 详情成功(字典格式): {contact_info}")
+                                else:
+                                    logger.warning(f"联系人 {wxid} 详情格式不支持: {type(detail)}")
+                                    # 创建基本联系人信息
+                                    contact_info = {
+                                        'wxid': wxid,
+                                        'nickname': wxid,
+                                        'type': 'friend'
+                                    }
+                            else:
+                                logger.warning(f"无法获取联系人 {wxid} 的详细信息，API返回空数据")
+                                # 创建基本联系人信息
+                                contact_info = {
+                                    'wxid': wxid,
+                                    'nickname': wxid,
+                                    'type': 'friend'
+                                }
+
+                            # 更新到数据库
+                            update_contact_in_db(contact_info)
+                            logger.debug(f"已在消息处理中更新联系人 {wxid} 的信息")
+                        except Exception as e:
+                            logger.error(f"调用API获取联系人 {wxid} 详情失败: {str(e)}")
+                            # 创建基本联系人信息
+                            contact_info = {
+                                'wxid': wxid,
+                                'nickname': wxid,
+                                'type': 'friend'
+                            }
+                            # 仍然更新到数据库，确保至少有基本信息
+                            update_contact_in_db(contact_info)
+                            logger.debug(f"已在消息处理中更新联系人 {wxid} 的基本信息")
+                except Exception as e:
+                    logger.error(f"在消息处理中获取联系人 {wxid} 信息失败: {str(e)}")
+                    # 创建基本联系人信息并保存
+                    contact_info = {
+                        'wxid': wxid,
+                        'nickname': wxid,
+                        'type': 'friend' if not wxid.endswith("@chatroom") else 'group'
+                    }
+                    update_contact_in_db(contact_info)
+                    logger.debug(f"已在消息处理中更新联系人 {wxid} 的基本信息(异常处理)")
+        except Exception as e:
+            logger.error(f"更新联系人信息时发生异常: {str(e)}")
+
     async def process_message(self, message: Dict[str, Any]):
         """处理接收到的消息"""
 
         msg_type = message.get("MsgType")
 
         # 预处理消息
-        message["FromWxid"] = message.get("FromUserName", {}).get("string")
+        # 确保 FromWxid 始终是字符串，默认为空字符串
+        from_user = message.get("FromUserName", {})
+        if isinstance(from_user, dict):
+            message["FromWxid"] = from_user.get("string", "")
+        else:
+            message["FromWxid"] = str(from_user) if from_user else ""
         message.pop("FromUserName", None)
-        message["ToWxid"] = message.get("ToWxid", {}).get("string")
+
+        # 确保 ToWxid 始终是字符串，默认为空字符串
+        to_wxid = message.get("ToWxid", {})
+        if isinstance(to_wxid, dict):
+            message["ToWxid"] = to_wxid.get("string", "")
+        else:
+            message["ToWxid"] = str(to_wxid) if to_wxid else ""
 
         # 处理一下自己发的消息
         to_wxid = message.get("ToWxid", "")
         if message.get("FromWxid") == self.wxid and isinstance(to_wxid, str) and to_wxid.endswith("@chatroom"):
             message["FromWxid"], message["ToWxid"] = message["ToWxid"], message["FromWxid"]
+
+        # 异步更新发送者联系人信息
+        from_wxid = message.get("FromWxid", "")
+        if from_wxid and from_wxid != self.wxid:
+            # 如果是群聊，只更新群聊本身信息
+            if from_wxid.endswith("@chatroom"):
+                logger.info(f"开始异步更新群聊信息: {from_wxid}")
+                update_task = asyncio.create_task(self.update_contact_info(from_wxid))
+                # 添加回调以记录完成状态
+                update_task.add_done_callback(
+                    lambda t: logger.info(f"完成群聊信息更新: {from_wxid}, 状态: {'success' if not t.exception() else f'error: {t.exception()}'}")
+                )
+            # 如果是私聊，更新发送者信息
+            elif not from_wxid.endswith("@chatroom"):
+                logger.info(f"开始异步更新发送者联系人信息: {from_wxid}")
+                update_task = asyncio.create_task(self.update_contact_info(from_wxid))
+                # 添加回调以记录完成状态
+                update_task.add_done_callback(
+                    lambda t: logger.info(f"完成发送者联系人信息更新: {from_wxid}, 状态: {'success' if not t.exception() else f'error: {t.exception()}'}")
+                )
 
         # 根据消息类型触发不同的事件
         if msg_type == 1:  # 文本消息
@@ -133,6 +373,9 @@ class XYBot:
             if len(split_content) > 1:
                 message["Content"] = split_content[1]
                 message["SenderWxid"] = split_content[0]
+
+                # 不更新群聊中发送者的联系人信息
+                # 根据需求，只更新群聊本身信息，不更新群聊中发送者信息
             else:
                 message["Content"] = split_content[0]
                 message["SenderWxid"] = self.wxid
@@ -195,6 +438,9 @@ class XYBot:
             if len(split_content) > 1:
                 message["Content"] = split_content[1]
                 message["SenderWxid"] = split_content[0]
+
+                # 不更新群聊中发送者的联系人信息
+                # 根据需求，只更新群聊本身信息，不更新群聊中发送者信息
             else:
                 message["Content"] = split_content[0]
                 message["SenderWxid"] = self.wxid
@@ -272,6 +518,9 @@ class XYBot:
             if len(split_content) > 1:
                 message["Content"] = split_content[1]
                 message["SenderWxid"] = split_content[0]
+
+                # 不更新群聊中发送者的联系人信息
+                # 根据需求，只更新群聊本身信息，不更新群聊中发送者信息
             else:
                 message["Content"] = split_content[0]
                 message["SenderWxid"] = self.wxid
@@ -329,6 +578,9 @@ class XYBot:
             if len(split_content) > 1:
                 message["Content"] = split_content[1]
                 message["ActualUserWxid"] = split_content[0]
+
+                # 不更新群聊中发送者的联系人信息
+                # 根据需求，只更新群聊本身信息，不更新群聊中发送者信息
             else:
                 message["Content"] = split_content[0]
                 message["ActualUserWxid"] = self.wxid
@@ -367,6 +619,9 @@ class XYBot:
             if len(split_content) > 1:
                 message["Content"] = split_content[1]
                 message["SenderWxid"] = split_content[0]
+
+                # 不更新群聊中发送者的联系人信息
+                # 根据需求，只更新群聊本身信息，不更新群聊中发送者信息
             else:
                 message["Content"] = split_content[0]
                 message["SenderWxid"] = self.wxid
@@ -527,6 +782,9 @@ class XYBot:
             if len(split_content) > 1:
                 message["Content"] = split_content[1]
                 message["SenderWxid"] = split_content[0]
+
+                # 不更新群聊中发送者的联系人信息
+                # 根据需求，只更新群聊本身信息，不更新群聊中发送者信息
             else:
                 message["Content"] = split_content[0]
                 message["SenderWxid"] = self.wxid
@@ -602,6 +860,9 @@ class XYBot:
             if len(split_content) > 1:
                 message["Content"] = split_content[1]
                 message["SenderWxid"] = split_content[0]
+
+                # 不更新群聊中发送者的联系人信息
+                # 根据需求，只更新群聊本身信息，不更新群聊中发送者信息
             else:
                 message["Content"] = split_content[0]
                 message["SenderWxid"] = self.wxid
@@ -667,18 +928,76 @@ class XYBot:
                 logger.warning("风控保护: 新设备登录后4小时内请挂机")
 
     def ignore_check(self, FromWxid: str, SenderWxid: str):
+        # 过滤公众号消息（公众号wxid通常以gh_开头）
+        if SenderWxid and isinstance(SenderWxid, str) and SenderWxid.startswith('gh_'):
+            logger.debug(f"忽略公众号消息: {SenderWxid}")
+            return False
+        if FromWxid and isinstance(FromWxid, str) and FromWxid.startswith('gh_'):
+            logger.debug(f"忽略公众号消息: {FromWxid}")
+            return False
+
+        # 过滤微信团队和系统通知
+        system_accounts = [
+            'weixin', # 微信团队
+            'filehelper', # 文件传输助手
+            'fmessage', # 朋友推荐通知
+            'medianote', # 语音记事本
+            'floatbottle', # 漂流瓶
+            'qmessage', # QQ离线消息
+            'qqmail', # QQ邮箱提醒
+            'tmessage', # 腾讯新闻
+            'weibo', # 微博推送
+            'newsapp', # 新闻推送
+            'notification_messages', # 服务通知
+            'helper_entry', # 新版微信运动
+            'mphelper', # 公众号助手
+            'brandsessionholder', # 公众号消息
+            'weixinreminder', # 微信提醒
+            'officialaccounts', # 公众平台
+        ]
+
+        # 检查是否是系统账号
+        for account in system_accounts:
+            if (SenderWxid and isinstance(SenderWxid, str) and SenderWxid == account) or \
+               (FromWxid and isinstance(FromWxid, str) and FromWxid == account):
+                logger.debug(f"忽略系统账号消息: {SenderWxid or FromWxid}")
+                return False
+
+        # 检测其他特殊账号特征
+        # 微信支付相关通知
+        if (SenderWxid and isinstance(SenderWxid, str) and 'wxpay' in SenderWxid) or \
+           (FromWxid and isinstance(FromWxid, str) and 'wxpay' in FromWxid):
+            logger.debug(f"忽略微信支付相关消息: {SenderWxid or FromWxid}")
+            return False
+
+        # 腾讯游戏相关通知
+        if (SenderWxid and isinstance(SenderWxid, str) and ('tencent' in SenderWxid.lower() or 'game' in SenderWxid.lower())) or \
+           (FromWxid and isinstance(FromWxid, str) and ('tencent' in FromWxid.lower() or 'game' in FromWxid.lower())):
+            logger.debug(f"忽略腾讯游戏相关消息: {SenderWxid or FromWxid}")
+            return False
+
+        # 其他特殊账号特征
+        # 微信官方账号通常包含"service"或"official"
+        if (SenderWxid and isinstance(SenderWxid, str) and ('service' in SenderWxid.lower() or 'official' in SenderWxid.lower())) or \
+           (FromWxid and isinstance(FromWxid, str) and ('service' in FromWxid.lower() or 'official' in FromWxid.lower())):
+            logger.debug(f"忽略官方服务账号消息: {SenderWxid or FromWxid}")
+            return False
+
+
+
         # 先检查是否是群聊消息
-        is_group = FromWxid.endswith("@chatroom")
+        is_group = FromWxid and isinstance(FromWxid, str) and FromWxid.endswith("@chatroom")
 
         if self.ignore_mode == "Whitelist":
             if is_group:
-                # 群聊消息：有三种情况
-                # 1. 群聊ID和发送者ID都在白名单中
-                # 2. 群聊ID在白名单中，且发送者是机器人自己
-                # 3. 发送者ID在白名单中（无论群聊ID是否在白名单中）
+                # 群聊消息：有两种情况
+                # 1. 群聊ID在白名单中（处理该群中的所有消息）
+                # 2. 发送者ID在白名单中（无论群聊ID是否在白名单中）
 
-                # 只有当发送者ID在白名单中，或者群聊ID在白名单中且发送者是机器人自己时，才处理消息
-                return SenderWxid in self.whitelist or (FromWxid in self.whitelist and SenderWxid == self.wxid)
+                # 当发送者ID在白名单中，或者群聊ID在白名单中时，才处理消息
+                # 修改逻辑，允许处理白名单群聊中的所有消息，而不仅仅是机器人自己发送的消息
+                logger.debug(f"白名单检查: 群聊ID={FromWxid}, 发送者ID={SenderWxid}, 群聊ID在白名单中={FromWxid in self.whitelist}, 发送者ID在白名单中={SenderWxid in self.whitelist}")
+                return SenderWxid in self.whitelist or FromWxid in self.whitelist
             else:
                 # 私聊消息：发送者ID在白名单中
                 return SenderWxid in self.whitelist
