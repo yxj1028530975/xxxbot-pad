@@ -108,15 +108,8 @@ document.addEventListener('DOMContentLoaded', function() {
         console.warn('找不到插件过滤按钮，无法添加事件监听器');
     }
 
-    // 为刷新插件按钮添加点击事件
-    const refreshPluginsBtn = document.getElementById('btn-refresh-plugins');
-    if (refreshPluginsBtn) {
-        refreshPluginsBtn.addEventListener('click', function() {
-            loadPlugins();
-        });
-    } else {
-        console.warn('找不到刷新插件按钮，无法添加事件监听器');
-    }
+    // 自动加载插件列表
+    loadPlugins();
 
     // 为刷新市场按钮添加点击事件
     const refreshMarketBtn = document.getElementById('btn-refresh-market');
@@ -181,16 +174,7 @@ document.addEventListener('DOMContentLoaded', function() {
         emergencyButton.remove();
     }
 
-    // 为添加插件按钮添加点击事件
-    const addPluginBtn = document.getElementById('btn-add-plugin');
-    if (addPluginBtn) {
-        addPluginBtn.addEventListener('click', function() {
-            // 滚动到插件市场部分
-            document.querySelector('.card[data-aos="fade-up"][data-aos-delay="100"]').scrollIntoView({ behavior: 'smooth' });
-        });
-    } else {
-        console.warn('找不到添加插件按钮，无法添加事件监听器');
-    }
+    // 已删除添加插件按钮
 
     // 配置保存按钮点击事件
     document.getElementById('plugin-config-save').addEventListener('click', function() {

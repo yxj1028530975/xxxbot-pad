@@ -7,8 +7,9 @@ import os
 import json
 import shutil
 import time
+import sqlite3
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse, FileResponse, Response
 from fastapi.templating import Jinja2Templates
@@ -34,6 +35,14 @@ ACCOUNT_LIST_FILE = ACCOUNTS_DIR / "account_list.json"
 
 # 当前活动账号文件
 ACTIVE_ACCOUNT_FILE = Path("resource") / "robot_stat.json"
+
+# 数据库文件列表
+DATABASE_FILES = [
+    Path("database") / "xybot.db",
+    Path("database") / "keyval.db",
+    Path("database") / "message.db",
+    Path("database") / "contacts.db"
+]
 
 def ensure_accounts_dir():
     """确保账号存储目录存在"""
@@ -195,6 +204,14 @@ def save_current_account_to_list() -> bool:
     # 获取账号列表
     account_list = get_account_list()
 
+    # 创建账号目录
+    account_dir = ACCOUNTS_DIR / wxid
+    account_dir.mkdir(parents=True, exist_ok=True)
+
+    # 创建数据库目录
+    db_dir = account_dir / "database"
+    db_dir.mkdir(parents=True, exist_ok=True)
+
     # 检查账号是否已存在
     account_exists = False
     for account in account_list["accounts"]:
@@ -214,10 +231,20 @@ def save_current_account_to_list() -> bool:
                 account["device_name"] = current_account.get("device_name")
 
             # 保存账号文件
-            account_file = ACCOUNTS_DIR / f"{wxid}.json"
+            account_file = account_dir / "account.json"
             try:
                 shutil.copy2(ACTIVE_ACCOUNT_FILE, account_file)
                 logger.info(f"更新账号文件: {account_file}")
+
+                # 备份数据库文件
+                for db_file in DATABASE_FILES:
+                    if db_file.exists():
+                        target_db_file = db_dir / db_file.name
+                        try:
+                            shutil.copy2(db_file, target_db_file)
+                            logger.info(f"备份数据库文件: {db_file} -> {target_db_file}")
+                        except Exception as e:
+                            logger.error(f"备份数据库文件失败: {db_file}, 错误: {e}")
             except Exception as e:
                 logger.error(f"更新账号文件失败: {e}")
                 return False
@@ -239,17 +266,27 @@ def save_current_account_to_list() -> bool:
             "avatar_url": avatar_url,
             "device_name": device_name,
             "last_login": time.time(),
-            "file_name": f"{wxid}.json"
+            "file_name": f"{wxid}/account.json"
         }
 
         # 添加到列表
         account_list["accounts"].append(new_account)
 
         # 保存账号文件
-        account_file = ACCOUNTS_DIR / f"{wxid}.json"
+        account_file = account_dir / "account.json"
         try:
             shutil.copy2(ACTIVE_ACCOUNT_FILE, account_file)
             logger.info(f"创建账号文件: {account_file}")
+
+            # 备份数据库文件
+            for db_file in DATABASE_FILES:
+                if db_file.exists():
+                    target_db_file = db_dir / db_file.name
+                    try:
+                        shutil.copy2(db_file, target_db_file)
+                        logger.info(f"备份数据库文件: {db_file} -> {target_db_file}")
+                    except Exception as e:
+                        logger.error(f"备份数据库文件失败: {db_file}, 错误: {e}")
         except Exception as e:
             logger.error(f"创建账号文件失败: {e}")
             return False
@@ -357,6 +394,33 @@ async def api_switch_account(wxid: str, request: Request):
                 with open(ACTIVE_ACCOUNT_FILE, "w", encoding="utf-8") as f:
                     json.dump(empty_account, f, ensure_ascii=False, indent=2)
                 logger.info(f"创建空账号文件: {ACTIVE_ACCOUNT_FILE}")
+
+                # 先删除所有当前数据库文件
+                for db_file in DATABASE_FILES:
+                    if db_file.exists():
+                        try:
+                            # 关闭数据库连接，确保文件可以被删除
+                            try:
+                                conn = sqlite3.connect(str(db_file))
+                                conn.close()
+                            except Exception as e:
+                                logger.warning(f"关闭数据库连接失败: {db_file}, 错误: {e}")
+
+                            # 删除数据库文件
+                            os.remove(db_file)
+                            logger.info(f"删除旧数据库文件: {db_file}")
+                        except Exception as e:
+                            logger.error(f"删除旧数据库文件失败: {db_file}, 错误: {e}")
+
+                # 创建新的空数据库文件
+                for db_file in DATABASE_FILES:
+                    try:
+                        # 创建空数据库文件
+                        conn = sqlite3.connect(str(db_file))
+                        conn.close()
+                        logger.info(f"创建新的空数据库文件: {db_file}")
+                    except Exception as e:
+                        logger.error(f"创建新的空数据库文件失败: {db_file}, 错误: {e}")
             except Exception as e:
                 logger.error(f"创建空账号文件失败: {e}")
                 return JSONResponse(content={"success": False, "error": f"创建新账号失败: {str(e)}"})
@@ -367,14 +431,24 @@ async def api_switch_account(wxid: str, request: Request):
 
             # 重启系统
             if restart_system:
-                # 使用await等待restart_system协程完成
-                await restart_system()
+                try:
+                    logger.info(f"准备重启系统，restart_system函数: {restart_system}")
+                    # 使用await等待restart_system协程完成
+                    await restart_system()
+                    logger.info("已调用restart_system函数，系统应该开始重启")
+                except Exception as e:
+                    logger.error(f"调用restart_system函数失败: {e}")
+                    return JSONResponse(content={
+                        "success": False,
+                        "error": f"重启系统失败: {str(e)}"
+                    })
 
                 return JSONResponse(content={
                     "success": True,
                     "message": "已创建新账号，系统正在重启，请稍后扫码登录"
                 })
             else:
+                logger.error("重启函数未设置，无法完成账号切换")
                 return JSONResponse(content={
                     "success": False,
                     "error": "重启函数未设置，无法完成账号切换"
@@ -393,10 +467,35 @@ async def api_switch_account(wxid: str, request: Request):
                 "error": f"账号 {wxid} 不存在"
             })
 
-        # 获取账号文件路径
-        account_file = ACCOUNTS_DIR / f"{wxid}.json"
+        # 获取账号目录和文件路径
+        account_dir = ACCOUNTS_DIR / wxid
+        account_file = account_dir / "account.json"
+        db_dir = account_dir / "database"
+
+        # 检查是否存在旧格式的账号文件
+        old_account_file = ACCOUNTS_DIR / f"{wxid}.json"
+        if not account_file.exists() and old_account_file.exists():
+            logger.info(f"发现旧格式账号文件: {old_account_file}")
+            # 创建新的目录结构
+            account_dir.mkdir(parents=True, exist_ok=True)
+            db_dir.mkdir(parents=True, exist_ok=True)
+
+            # 复制旧账号文件到新位置
+            try:
+                shutil.copy2(old_account_file, account_file)
+                logger.info(f"将旧格式账号文件转换为新格式: {old_account_file} -> {account_file}")
+
+                # 更新账号列表中的文件路径
+                if target_account:
+                    target_account["file_name"] = f"{wxid}/account.json"
+                    save_account_list(account_list)
+                    logger.info(f"更新账号列表中的文件路径: {target_account['file_name']}")
+            except Exception as e:
+                logger.error(f"转换旧格式账号文件失败: {e}")
+                return JSONResponse(content={"success": False, "error": f"转换账号文件失败: {str(e)}"})
 
         if not account_file.exists():
+            logger.error(f"账号文件不存在: {account_file}")
             return JSONResponse(content={
                 "success": False,
                 "error": f"账号文件 {account_file} 不存在"
@@ -404,8 +503,65 @@ async def api_switch_account(wxid: str, request: Request):
 
         # 复制账号文件到活动账号文件
         try:
+            # 复制账号文件
             shutil.copy2(account_file, ACTIVE_ACCOUNT_FILE)
             logger.info(f"切换到账号: {wxid}")
+
+            # 先删除所有当前数据库文件
+            for db_file in DATABASE_FILES:
+                if db_file.exists():
+                    try:
+                        # 关闭数据库连接，确保文件可以被删除
+                        try:
+                            conn = sqlite3.connect(str(db_file))
+                            conn.close()
+                        except Exception as e:
+                            logger.warning(f"关闭数据库连接失败: {db_file}, 错误: {e}")
+
+                        # 删除数据库文件
+                        os.remove(db_file)
+                        logger.info(f"删除旧数据库文件: {db_file}")
+                    except Exception as e:
+                        logger.error(f"删除旧数据库文件失败: {db_file}, 错误: {e}")
+
+            # 清除内存中的联系人缓存
+            try:
+                # 尝试导入并清除联系人缓存
+                from database.contacts_db import clear_contacts_cache
+                clear_contacts_cache()
+                logger.info("清除联系人缓存成功")
+            except Exception as e:
+                logger.warning(f"清除联系人缓存失败: {e}")
+
+            # 恢复数据库文件
+            if db_dir.exists():
+                # 从目标账号的备份中恢复数据库文件
+                for db_file in DATABASE_FILES:
+                    source_db_file = db_dir / db_file.name
+                    if source_db_file.exists():
+                        try:
+                            # 复制数据库文件
+                            shutil.copy2(source_db_file, db_file)
+                            logger.info(f"恢复数据库文件: {source_db_file} -> {db_file}")
+                        except Exception as e:
+                            logger.error(f"恢复数据库文件失败: {source_db_file}, 错误: {e}")
+                    else:
+                        # 如果没有备份文件，创建新的空数据库文件
+                        try:
+                            conn = sqlite3.connect(str(db_file))
+                            conn.close()
+                            logger.info(f"创建新的空数据库文件: {db_file}")
+                        except Exception as e:
+                            logger.error(f"创建新的空数据库文件失败: {db_file}, 错误: {e}")
+            else:
+                # 如果目标账号没有数据库目录，创建新的空数据库文件
+                for db_file in DATABASE_FILES:
+                    try:
+                        conn = sqlite3.connect(str(db_file))
+                        conn.close()
+                        logger.info(f"创建新的空数据库文件: {db_file}")
+                    except Exception as e:
+                        logger.error(f"创建新的空数据库文件失败: {db_file}, 错误: {e}")
         except Exception as e:
             logger.error(f"复制账号文件失败: {e}")
             return JSONResponse(content={"success": False, "error": f"切换账号失败: {str(e)}"})
@@ -421,14 +577,24 @@ async def api_switch_account(wxid: str, request: Request):
 
         # 重启系统
         if restart_system:
-            # 使用await等待restart_system协程完成
-            await restart_system()
+            try:
+                logger.info(f"准备重启系统，restart_system函数: {restart_system}")
+                # 使用await等待restart_system协程完成
+                await restart_system()
+                logger.info("已调用restart_system函数，系统应该开始重启")
+            except Exception as e:
+                logger.error(f"调用restart_system函数失败: {e}")
+                return JSONResponse(content={
+                    "success": False,
+                    "error": f"重启系统失败: {str(e)}"
+                })
 
             return JSONResponse(content={
                 "success": True,
                 "message": f"正在切换到账号: {target_account.get('nickname', wxid)}，系统正在重启"
             })
         else:
+            logger.error("重启函数未设置，无法完成账号切换")
             return JSONResponse(content={
                 "success": False,
                 "error": "重启函数未设置，无法完成账号切换"
@@ -544,15 +710,16 @@ async def api_delete_account(wxid: str, request: Request):
                 "error": f"账号 {wxid} 不存在"
             })
 
-        # 删除账号文件
-        account_file = ACCOUNTS_DIR / f"{wxid}.json"
-        if account_file.exists():
+        # 删除账号目录及文件
+        account_dir = ACCOUNTS_DIR / wxid
+        if account_dir.exists():
             try:
-                os.remove(account_file)
-                logger.info(f"删除账号文件: {account_file}")
+                # 使用shutil.rmtree删除整个目录
+                shutil.rmtree(account_dir)
+                logger.info(f"删除账号目录: {account_dir}")
             except Exception as e:
-                logger.error(f"删除账号文件失败: {e}")
-                return JSONResponse(content={"success": False, "error": f"删除账号文件失败: {str(e)}"})
+                logger.error(f"删除账号目录失败: {e}")
+                return JSONResponse(content={"success": False, "error": f"删除账号目录失败: {str(e)}"})
 
         # 从列表中删除账号
         del account_list["accounts"][account_index]

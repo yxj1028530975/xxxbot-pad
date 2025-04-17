@@ -194,12 +194,6 @@
 {% endblock %}
 
 {% block page_actions %}
-<button type="button" class="btn btn-sm btn-primary me-2" id="btn-restart">
-    <i class="bi bi-arrow-repeat me-1"></i>重启系统
-</button>
-<button type="button" class="btn btn-sm btn-outline-success" id="btn-update">
-    <i class="bi bi-cloud-download me-1"></i>检查更新
-</button>
 {% endblock %}
 
 {% block content %}
@@ -977,61 +971,9 @@
             }
         });
 
-        // 重启系统按钮
-        document.getElementById('btn-restart').addEventListener('click', function() {
-            if (confirm('确定要重启容器吗？这将导致服务短暂中断。')) {
-                // 显示加载状态
-                const button = this;
-                const originalText = button.innerHTML;
-                button.disabled = true;
-                button.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>重启中...';
+        // 已删除重启系统按钮
 
-                // 调用重启容器API
-                fetch('/api/system/restart', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    credentials: 'include'  // 确保发送认证Cookie
-                })
-                .then(response => {
-                    if (!response.ok) {
-                        throw new Error('服务器响应状态码: ' + response.status);
-                    }
-                    return response.json();
-                })
-                .then(data => {
-                    if (data.success) {
-                        // 显示成功消息
-                        alert('重启命令已发送，容器将在几秒钟内重启。\n\n请等待系统重启完成后刷新页面。');
-
-                        // 10秒后自动刷新页面
-                        setTimeout(() => {
-                            window.location.reload();
-                        }, 10000);
-                    } else {
-                        // 显示错误
-                        alert('重启失败: ' + (data.error || '未知错误'));
-                        // 恢复按钮状态
-                        button.disabled = false;
-                        button.innerHTML = originalText;
-                    }
-                })
-                .catch(error => {
-                    console.error('重启请求失败:', error);
-                    alert('重启请求失败: ' + error.message);
-                    // 恢复按钮状态
-                    button.disabled = false;
-                    button.innerHTML = originalText;
-                });
-            }
-        });
-
-        // 检查更新按钮
-        document.getElementById('btn-update').addEventListener('click', function() {
-            // 这里可以添加检查更新的代码
-            alert('检查更新功能待实现');
-        });
+        // 已删除检查更新按钮
 
         // 日志筛选
         document.getElementById('log-level').addEventListener('change', function() {

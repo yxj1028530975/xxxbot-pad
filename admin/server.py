@@ -47,6 +47,20 @@ try:
 except ImportError:
     has_api_manager = False
 
+# 导入联系人数据库模块
+try:
+    from database.contacts_db import (
+        get_contacts_from_db,
+        save_contacts_to_db,
+        update_contact_in_db,
+        get_contact_from_db,
+        get_contacts_count
+    )
+    has_contacts_db = True
+except ImportError as e:
+    has_contacts_db = False
+    print(f"联系人数据库模块导入失败: {e}")
+
 from loguru import logger
 import psutil
 import platform
@@ -57,6 +71,9 @@ import re
 # 注意：这里使用相对导入，因为admin目录不在Python模块搜索路径中
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.github_proxy import get_github_url
+
+# 导入数据库模块
+# 注意: 我们已经在上面导入了联系人数据库模块
 
 # 导入插件基类
 from utils.plugin_base import PluginBase
@@ -4633,10 +4650,14 @@ except:
                 content={"success": False, "error": f"获取系统日志失败: {str(e)}"}
             )
 
-    # API: 联系人管理 (需要认证)
-    @app.get("/api/contacts", response_class=JSONResponse)
-    async def api_contacts(request: Request, refresh: bool = False):
-        """获取联系人列表"""
+    # API: 更新数据库中所有联系人信息
+    @app.get("/api/contacts/update_all", response_class=JSONResponse)
+    async def api_update_all_contacts(request: Request):
+        """更新数据库中所有联系人信息
+
+        Args:
+            request: 请求对象
+        """
         # 检查用户是否已登录
         username = await check_auth(request)
         if not username:
@@ -4645,30 +4666,521 @@ except:
                 "error": "未授权访问"
             })
 
-        # 缓存文件路径
-        cache_dir = os.path.join("data", "cache")
-        os.makedirs(cache_dir, exist_ok=True)
-        contacts_cache_file = os.path.join(cache_dir, "contacts_cache.json")
+        logger.info(f"用户 {username} 请求更新数据库中所有联系人信息")
 
-        # 如果不是强制刷新，尝试从缓存读取
-        if not refresh and os.path.exists(contacts_cache_file):
-            try:
-                # 检查缓存是否在24小时内
-                cache_time = os.path.getmtime(contacts_cache_file)
-                current_time = time.time()
-                cache_age = current_time - cache_time
+        try:
+            # 确保bot_instance可用
+            if not bot_instance or not hasattr(bot_instance, 'bot'):
+                logger.error("bot_instance未设置或不可用")
+                return JSONResponse(content={
+                    "success": False,
+                    "error": "机器人实例未初始化，请确保机器人已启动"
+                })
 
-                # 如果缓存不超过24小时，直接返回缓存数据
-                if cache_age < 24 * 3600:  # 24小时 = 86400秒
-                    logger.info(f"从缓存加载联系人列表（缓存时间：{datetime.fromtimestamp(cache_time).strftime('%Y-%m-%d %H:%M:%S')}）")
-                    with open(contacts_cache_file, 'r', encoding='utf-8') as f:
-                        cached_data = json.load(f)
-                        return JSONResponse(content=cached_data)
+            # 检查get_contract_detail方法
+            if not hasattr(bot_instance.bot, 'get_contract_detail'):
+                logger.error("bot.get_contract_detail方法不存在")
+                return JSONResponse(content={
+                    "success": False,
+                    "error": "微信API不支持获取联系人详情"
+                })
+
+            # 保存原始wxid
+            original_wxid = None
+            if hasattr(bot_instance.bot, 'wxid'):
+                original_wxid = bot_instance.bot.wxid
+
+            # 设置wxid
+            bot_instance.bot.wxid = bot_instance.wxid
+
+            # 从数据库中获取所有联系人
+            from database.contacts_db import get_all_contacts
+            all_contacts = get_all_contacts()
+
+            if not all_contacts:
+                logger.warning("数据库中没有联系人信息")
+                return JSONResponse(content={
+                    "success": False,
+                    "error": "数据库中没有联系人信息"
+                })
+
+            logger.info(f"从数据库中获取到 {len(all_contacts)} 个联系人")
+
+            # 创建异步任务列表
+            import asyncio
+            update_tasks = []
+            updated_count = 0
+            failed_count = 0
+
+            # 每批处理的联系人数量
+            batch_size = 20
+
+            # 分批处理联系人
+            for i in range(0, len(all_contacts), batch_size):
+                batch = all_contacts[i:i+batch_size]
+
+                # 处理当前批次
+                for contact in batch:
+                    wxid = contact.get('wxid')
+                    if not wxid:
+                        continue
+
+                    try:
+                        # 调用API获取联系人详情
+                        if asyncio.get_event_loop().is_running():
+                            detail = await bot_instance.bot.get_contract_detail(wxid)
+                        else:
+                            loop = asyncio.new_event_loop()
+                            asyncio.set_event_loop(loop)
+                            try:
+                                detail = loop.run_until_complete(bot_instance.bot.get_contract_detail(wxid))
+                            finally:
+                                loop.close()
+
+                        # 处理返回数据
+                        if not detail:
+                            logger.warning(f"获取联系人 {wxid} 详情失败，返回空数据")
+                            failed_count += 1
+                            continue
+
+                        # 处理返回结果
+                        contact_info = None
+                        if isinstance(detail, list) and len(detail) > 0:
+                            detail_item = detail[0]
+
+                            # 处理昵称
+                            nickname = ""
+                            if 'NickName' in detail_item:
+                                if isinstance(detail_item['NickName'], dict) and 'string' in detail_item['NickName']:
+                                    nickname = detail_item['NickName']['string']
+                                else:
+                                    nickname = str(detail_item['NickName'])
+                            elif 'nickname' in detail_item:
+                                nickname = detail_item.get('nickname')
+
+                            # 处理头像
+                            avatar = ""
+                            if 'BigHeadImgUrl' in detail_item and detail_item['BigHeadImgUrl']:
+                                avatar = detail_item['BigHeadImgUrl']
+                                logger.debug(f"使用BigHeadImgUrl作为头像: {avatar}")
+                            elif 'SmallHeadImgUrl' in detail_item and detail_item['SmallHeadImgUrl']:
+                                avatar = detail_item['SmallHeadImgUrl']
+                                logger.debug(f"使用SmallHeadImgUrl作为头像: {avatar}")
+                            elif 'avatar' in detail_item:
+                                avatar = detail_item.get('avatar')
+
+                            # 处理备注
+                            remark = ""
+                            if 'Remark' in detail_item:
+                                if isinstance(detail_item['Remark'], dict) and 'string' in detail_item['Remark']:
+                                    remark = detail_item['Remark']['string']
+                                elif isinstance(detail_item['Remark'], str):
+                                    remark = detail_item['Remark']
+                            elif 'remark' in detail_item:
+                                remark = detail_item.get('remark')
+
+                            # 处理微信号
+                            alias = ""
+                            if 'Alias' in detail_item:
+                                alias = detail_item.get('Alias')
+                            elif 'alias' in detail_item:
+                                alias = detail_item.get('alias')
+
+                            # 确定联系人类型
+                            contact_type = "friend"
+                            if wxid.endswith("@chatroom"):
+                                contact_type = "group"
+                            elif wxid.startswith("gh_"):
+                                contact_type = "official"
+
+                            # 创建联系人信息对象
+                            contact_info = {
+                                'wxid': wxid,
+                                'nickname': nickname or wxid,
+                                'avatar': avatar or '',
+                                'remark': remark or '',
+                                'alias': alias or '',
+                                'type': contact_type
+                            }
+                        elif isinstance(detail, dict):
+                            # 如果是字典，直接使用
+                            detail_item = detail
+
+                            # 处理昵称
+                            nickname = ""
+                            if 'NickName' in detail_item:
+                                if isinstance(detail_item['NickName'], dict) and 'string' in detail_item['NickName']:
+                                    nickname = detail_item['NickName']['string']
+                                else:
+                                    nickname = str(detail_item['NickName'])
+                            elif 'nickname' in detail_item:
+                                nickname = detail_item.get('nickname')
+
+                            # 处理头像
+                            avatar = ""
+                            if 'BigHeadImgUrl' in detail_item and detail_item['BigHeadImgUrl']:
+                                avatar = detail_item['BigHeadImgUrl']
+                                logger.debug(f"使用BigHeadImgUrl作为头像: {avatar}")
+                            elif 'SmallHeadImgUrl' in detail_item and detail_item['SmallHeadImgUrl']:
+                                avatar = detail_item['SmallHeadImgUrl']
+                                logger.debug(f"使用SmallHeadImgUrl作为头像: {avatar}")
+                            elif 'avatar' in detail_item:
+                                avatar = detail_item.get('avatar')
+
+                            # 处理备注
+                            remark = ""
+                            if 'Remark' in detail_item:
+                                if isinstance(detail_item['Remark'], dict) and 'string' in detail_item['Remark']:
+                                    remark = detail_item['Remark']['string']
+                                elif isinstance(detail_item['Remark'], str):
+                                    remark = detail_item['Remark']
+                            elif 'remark' in detail_item:
+                                remark = detail_item.get('remark')
+
+                            # 处理微信号
+                            alias = ""
+                            if 'Alias' in detail_item:
+                                alias = detail_item.get('Alias')
+                            elif 'alias' in detail_item:
+                                alias = detail_item.get('alias')
+
+                            # 确定联系人类型
+                            contact_type = "friend"
+                            if wxid.endswith("@chatroom"):
+                                contact_type = "group"
+                            elif wxid.startswith("gh_"):
+                                contact_type = "official"
+
+                            # 创建联系人信息对象
+                            contact_info = {
+                                'wxid': wxid,
+                                'nickname': nickname or wxid,
+                                'avatar': avatar or '',
+                                'remark': remark or '',
+                                'alias': alias or '',
+                                'type': contact_type
+                            }
+
+                        # 将联系人信息保存到数据库
+                        if contact_info:
+                            from database.contacts_db import update_contact_in_db
+                            update_contact_in_db(contact_info)
+                            updated_count += 1
+                            logger.info(f"已将联系人 {wxid} 信息更新到数据库")
+                        else:
+                            failed_count += 1
+                            logger.warning(f"无法解析联系人 {wxid} 的详情")
+                    except Exception as e:
+                        failed_count += 1
+                        logger.error(f"更新联系人 {wxid} 信息失败: {str(e)}")
+
+                # 每批处理完成后等待一小段时间，避免请求过于频繁
+                await asyncio.sleep(1)
+
+            # 恢复原始wxid
+            if original_wxid is not None:
+                bot_instance.bot.wxid = original_wxid
+
+            # 返回结果
+            return JSONResponse(content={
+                "success": True,
+                "message": f"成功更新 {updated_count} 个联系人信息，失败 {failed_count} 个",
+                "updated_count": updated_count,
+                "failed_count": failed_count,
+                "total_count": len(all_contacts)
+            })
+
+        except Exception as e:
+            import traceback
+            logger.error(f"更新所有联系人信息失败: {str(e)}")
+            logger.error(traceback.format_exc())
+            return JSONResponse(content={
+                "success": False,
+                "error": f"更新所有联系人信息失败: {str(e)}"
+            })
+
+    # API: 刷新单个联系人信息
+    @app.get("/api/contacts/{wxid}/refresh", response_class=JSONResponse)
+    async def api_refresh_contact(wxid: str, request: Request):
+        """刷新单个联系人信息
+
+        Args:
+            wxid: 联系人的wxid
+            request: 请求对象
+        """
+        # 检查用户是否已登录
+        username = await check_auth(request)
+        if not username:
+            return JSONResponse(content={
+                "success": False,
+                "error": "未授权访问"
+            })
+
+        logger.info(f"用户 {username} 请求刷新联系人 {wxid} 的信息")
+
+        try:
+            # 确保bot_instance可用
+            if not bot_instance or not hasattr(bot_instance, 'bot'):
+                logger.error("bot_instance未设置或不可用")
+                return JSONResponse(content={
+                    "success": False,
+                    "error": "机器人实例未初始化，请确保机器人已启动"
+                })
+
+            # 检查get_contract_detail方法
+            if not hasattr(bot_instance.bot, 'get_contract_detail'):
+                logger.error("bot.get_contract_detail方法不存在")
+                return JSONResponse(content={
+                    "success": False,
+                    "error": "微信API不支持获取联系人详情"
+                })
+
+            # 保存原始wxid
+            original_wxid = None
+            if hasattr(bot_instance.bot, 'wxid'):
+                original_wxid = bot_instance.bot.wxid
+
+            # 设置wxid并调用API
+            bot_instance.bot.wxid = bot_instance.wxid
+
+            # 调用API获取联系人详情
+            import asyncio
+            if asyncio.get_event_loop().is_running():
+                detail = await bot_instance.bot.get_contract_detail(wxid)
+            else:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    detail = loop.run_until_complete(bot_instance.bot.get_contract_detail(wxid))
+                finally:
+                    loop.close()
+
+            # 恢复原始wxid
+            if original_wxid is not None:
+                bot_instance.bot.wxid = original_wxid
+
+            # 处理返回数据
+            if not detail:
+                logger.warning(f"获取联系人 {wxid} 详情失败，返回空数据")
+                return JSONResponse(content={
+                    "success": False,
+                    "error": "获取联系人详情失败，返回空数据"
+                })
+
+            # 处理返回结果
+            contact_info = None
+            if isinstance(detail, list) and len(detail) > 0:
+                detail_item = detail[0]
+                logger.debug(f"联系人 {wxid} 详情项类型: {type(detail_item)}")
+
+                # 处理昵称
+                nickname = ""
+                if 'NickName' in detail_item:
+                    if isinstance(detail_item['NickName'], dict) and 'string' in detail_item['NickName']:
+                        nickname = detail_item['NickName']['string']
+                    else:
+                        nickname = str(detail_item['NickName'])
+                elif 'nickname' in detail_item:
+                    nickname = detail_item.get('nickname')
+
+                # 处理头像
+                avatar = ""
+                if 'BigHeadImgUrl' in detail_item and detail_item['BigHeadImgUrl']:
+                    avatar = detail_item['BigHeadImgUrl']
+                    logger.debug(f"使用BigHeadImgUrl作为头像: {avatar}")
+                elif 'SmallHeadImgUrl' in detail_item and detail_item['SmallHeadImgUrl']:
+                    avatar = detail_item['SmallHeadImgUrl']
+                    logger.debug(f"使用SmallHeadImgUrl作为头像: {avatar}")
+                elif 'avatar' in detail_item:
+                    avatar = detail_item.get('avatar')
+
+                # 处理备注
+                remark = ""
+                if 'Remark' in detail_item:
+                    if isinstance(detail_item['Remark'], dict) and 'string' in detail_item['Remark']:
+                        remark = detail_item['Remark']['string']
+                    elif isinstance(detail_item['Remark'], str):
+                        remark = detail_item['Remark']
+                elif 'remark' in detail_item:
+                    remark = detail_item.get('remark')
+
+                # 处理微信号
+                alias = ""
+                if 'Alias' in detail_item:
+                    alias = detail_item.get('Alias')
+                elif 'alias' in detail_item:
+                    alias = detail_item.get('alias')
+
+                # 确定联系人类型
+                contact_type = "friend"
+                if wxid.endswith("@chatroom"):
+                    contact_type = "group"
+                elif wxid.startswith("gh_"):
+                    contact_type = "official"
+
+                # 创建联系人信息对象
+                contact_info = {
+                    'wxid': wxid,
+                    'nickname': nickname or wxid,
+                    'avatar': avatar or '',
+                    'remark': remark or '',
+                    'alias': alias or '',
+                    'type': contact_type
+                }
+
+                # 将联系人信息保存到数据库
+                try:
+                    update_contact_in_db(contact_info)
+                    logger.info(f"已将联系人 {wxid} 信息更新到数据库")
+                except Exception as e:
+                    logger.error(f"保存联系人 {wxid} 到数据库失败: {str(e)}")
+            elif isinstance(detail, dict):
+                # 如果是字典，直接使用
+                detail_item = detail
+                logger.debug(f"联系人 {wxid} 详情项类型: {type(detail_item)}")
+
+                # 处理昵称
+                nickname = ""
+                if 'NickName' in detail_item:
+                    if isinstance(detail_item['NickName'], dict) and 'string' in detail_item['NickName']:
+                        nickname = detail_item['NickName']['string']
+                    else:
+                        nickname = str(detail_item['NickName'])
+                elif 'nickname' in detail_item:
+                    nickname = detail_item.get('nickname')
+
+                # 处理头像
+                avatar = ""
+                if 'BigHeadImgUrl' in detail_item and detail_item['BigHeadImgUrl']:
+                    avatar = detail_item['BigHeadImgUrl']
+                    logger.debug(f"使用BigHeadImgUrl作为头像: {avatar}")
+                elif 'SmallHeadImgUrl' in detail_item and detail_item['SmallHeadImgUrl']:
+                    avatar = detail_item['SmallHeadImgUrl']
+                    logger.debug(f"使用SmallHeadImgUrl作为头像: {avatar}")
+                elif 'avatar' in detail_item:
+                    avatar = detail_item.get('avatar')
+
+                # 处理备注
+                remark = ""
+                if 'Remark' in detail_item:
+                    if isinstance(detail_item['Remark'], dict) and 'string' in detail_item['Remark']:
+                        remark = detail_item['Remark']['string']
+                    elif isinstance(detail_item['Remark'], str):
+                        remark = detail_item['Remark']
+                elif 'remark' in detail_item:
+                    remark = detail_item.get('remark')
+
+                # 处理微信号
+                alias = ""
+                if 'Alias' in detail_item:
+                    alias = detail_item.get('Alias')
+                elif 'alias' in detail_item:
+                    alias = detail_item.get('alias')
+
+                # 确定联系人类型
+                contact_type = "friend"
+                if wxid.endswith("@chatroom"):
+                    contact_type = "group"
+                elif wxid.startswith("gh_"):
+                    contact_type = "official"
+
+                # 创建联系人信息对象
+                contact_info = {
+                    'wxid': wxid,
+                    'nickname': nickname or wxid,
+                    'avatar': avatar or '',
+                    'remark': remark or '',
+                    'alias': alias or '',
+                    'type': contact_type
+                }
+
+                # 将联系人信息保存到数据库
+                try:
+                    update_contact_in_db(contact_info)
+                    logger.info(f"已将联系人 {wxid} 信息更新到数据库")
+                except Exception as e:
+                    logger.error(f"保存联系人 {wxid} 到数据库失败: {str(e)}")
+
+            if contact_info:
+                return JSONResponse(content={
+                    "success": True,
+                    "data": contact_info
+                })
+            else:
+                return JSONResponse(content={
+                    "success": False,
+                    "error": "无法解析联系人详情"
+                })
+
+        except Exception as e:
+            import traceback
+            logger.error(f"刷新联系人 {wxid} 信息失败: {str(e)}")
+            logger.error(traceback.format_exc())
+            return JSONResponse(content={
+                "success": False,
+                "error": f"刷新联系人信息失败: {str(e)}"
+            })
+
+    # API: 联系人管理 (需要认证)
+    @app.get("/api/contacts", response_class=JSONResponse)
+    async def api_contacts(request: Request, refresh: bool = False, page: int = 0, page_size: int = 0):
+        """获取联系人列表
+
+        Args:
+            request: 请求对象
+            refresh: 是否强制刷新
+            page: 页码（从1开始），设为0表示不分页，返回所有联系人
+            page_size: 每页数量，设为0表示不分页，返回所有联系人
+        """
+        # 检查用户是否已登录
+        username = await check_auth(request)
+        if not username:
+            return JSONResponse(content={
+                "success": False,
+                "error": "未授权访问"
+            })
+
+        # 先尝试从数据库获取联系人列表
+        try:
+            # 如果不是强制刷新且数据库中有联系人数据，直接返回
+            contacts_count = get_contacts_count()
+            if not refresh and contacts_count > 0:
+                logger.info(f"从数据库加载{contacts_count}个联系人")
+
+                # 如果指定了分页参数，则返回分页数据
+                if page > 0 and page_size > 0:
+                    # 计算偏移量和限制
+                    offset = (page - 1) * page_size
+
+                    # 获取分页数据
+                    contacts = get_contacts_from_db(offset=offset, limit=page_size)
+
+                    # 计算总页数
+                    total_pages = (contacts_count + page_size - 1) // page_size
+
+                    return JSONResponse(content={
+                        "success": True,
+                        "data": contacts,
+                        "timestamp": int(time.time()),
+                        "pagination": {
+                            "page": page,
+                            "page_size": page_size,
+                            "total": contacts_count,
+                            "total_pages": total_pages
+                        }
+                    })
                 else:
-                    logger.info("联系人缓存已过期（超过24小时），将重新获取")
-            except Exception as e:
-                logger.error(f"读取联系人缓存失败: {e}")
+                    # 如果没有指定分页参数，返回所有数据
+                    contacts = get_contacts_from_db()
+                    return JSONResponse(content={
+                        "success": True,
+                        "data": contacts,
+                        "timestamp": int(time.time())
+                    })
+        except Exception as e:
+            logger.error(f"从数据库获取联系人失败: {str(e)}")
 
+        # 如果数据库中没有数据或需要强制刷新，则从微信API获取
         logger.info("请求联系人列表API")
 
         # 使用固定wxid调用微信API获取联系人列表
@@ -4732,15 +5244,89 @@ except:
 
             # 调用API获取联系人
             import asyncio
-            if asyncio.get_event_loop().is_running():
-                contacts_data = await bot_instance.bot.get_contract_list(wx_seq=0, chatroom_seq=0)
-            else:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                try:
-                    contacts_data = loop.run_until_complete(bot_instance.bot.get_contract_list(wx_seq=0, chatroom_seq=0))
-                finally:
-                    loop.close()
+            import traceback
+
+            # 初始化序列号
+            wx_seq = 0
+            chatroom_seq = 0
+            all_contacts_data = {"ContactUsernameList": []}
+
+            # 首先尝试使用新的API方法
+            try:
+                logger.info("尝试使用新的GetTotalContractList API获取联系人列表")
+                if hasattr(bot_instance.bot, 'get_total_contract_list'):
+                    if asyncio.get_event_loop().is_running():
+                        contacts_data = await bot_instance.bot.get_total_contract_list(wx_seq=0, chatroom_seq=0)
+                    else:
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                        try:
+                            contacts_data = loop.run_until_complete(bot_instance.bot.get_total_contract_list(wx_seq=0, chatroom_seq=0))
+                        finally:
+                            loop.close()
+                    logger.info("成功使用新的GetTotalContractList API获取联系人列表")
+                    all_contacts_data = contacts_data
+                else:
+                    raise AttributeError("Bot实例没有get_total_contract_list方法")
+            except Exception as e:
+                # 如果新API失败，回退到旧方法
+                logger.warning(f"使用新API获取联系人失败: {str(e)}，回退到旧方法")
+                logger.debug(traceback.format_exc())
+
+                # 递归获取所有联系人
+                iteration = 0
+                total_contacts = 0
+
+                # 不设置最大迭代次数，由系统自动识别何时已获取所有联系人
+                while True:
+                    iteration += 1
+                    logger.info(f"获取联系人批次 {iteration}，当前序列号: wx_seq={wx_seq}, chatroom_seq={chatroom_seq}")
+
+                    # 获取当前批次的联系人
+                    if asyncio.get_event_loop().is_running():
+                        batch_data = await bot_instance.bot.get_contract_list(wx_seq=wx_seq, chatroom_seq=chatroom_seq)
+                    else:
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                        try:
+                            batch_data = loop.run_until_complete(bot_instance.bot.get_contract_list(wx_seq=wx_seq, chatroom_seq=chatroom_seq))
+                        finally:
+                            loop.close()
+
+                    # 检查返回数据
+                    if not batch_data or not isinstance(batch_data, dict) or 'ContactUsernameList' not in batch_data:
+                        logger.warning(f"批次 {iteration} 返回数据无效或格式不正确")
+                        break
+
+                    # 获取当前批次的联系人数量
+                    batch_contacts = batch_data.get('ContactUsernameList', [])
+                    batch_count = len(batch_contacts)
+                    total_contacts += batch_count
+                    logger.info(f"批次 {iteration} 获取到 {batch_count} 个联系人，累计 {total_contacts} 个")
+
+                    # 合并联系人列表
+                    if iteration == 1:
+                        # 第一批次，直接使用返回数据
+                        all_contacts_data = batch_data
+                    else:
+                        # 后续批次，合并联系人列表
+                        all_contacts_data['ContactUsernameList'].extend(batch_contacts)
+
+                    # 检查是否有新的序列号
+                    new_wx_seq = batch_data.get('CurrentWxcontactSeq', 0)
+                    new_chatroom_seq = batch_data.get('CurrentChatroomContactSeq', 0)
+
+                    # 如果序列号没有变化或者没有返回联系人，说明已经获取完所有联系人
+                    if (new_wx_seq == wx_seq and new_chatroom_seq == chatroom_seq) or batch_count == 0:
+                        logger.info(f"序列号没有变化或者没有新的联系人，结束获取")
+                        break
+
+                    # 更新序列号继续获取
+                    wx_seq = new_wx_seq
+                    chatroom_seq = new_chatroom_seq
+
+                # 使用合并后的数据
+                contacts_data = all_contacts_data
 
             # 恢复原始wxid
             if original_wxid is not None:
@@ -4784,9 +5370,16 @@ except:
                 batch_size = 20
                 all_contact_details = {}
 
-                for i in range(0, len(contact_usernames), batch_size):
+                # 计算总批次数
+                total_batches = (len(contact_usernames) + batch_size - 1) // batch_size
+                logger.info(f"联系人总数: {len(contact_usernames)}, 批次大小: {batch_size}, 总批次: {total_batches}")
+
+                # 不限制批次数量，获取所有联系人
+                max_batches = total_batches  # 获取所有批次
+
+                for i in range(0, min(max_batches * batch_size, len(contact_usernames)), batch_size):
                     batch = contact_usernames[i:i+batch_size]
-                    logger.debug(f"获取联系人详情批次 {i//batch_size+1}/{(len(contact_usernames)+batch_size-1)//batch_size}: {batch}")
+                    logger.debug(f"获取联系人详情批次 {i//batch_size+1}/{total_batches}: {batch}")
 
                     try:
                         # 调用API获取联系人详情
@@ -4821,19 +5414,43 @@ except:
 
                         # 将联系人详情与wxid关联
                         for contact_detail in contact_details:
-                            # 修正UserName字段名大小写问题
+                            # 处理各种可能的用户ID字段
+                            wxid_found = False
+
+                            # 处理UserName字段
                             if 'UserName' in contact_detail and contact_detail['UserName']:
                                 # 处理嵌套结构，UserName可能是{"string": "wxid"}格式
                                 if isinstance(contact_detail['UserName'], dict) and 'string' in contact_detail['UserName']:
                                     wxid = contact_detail['UserName']['string']
+                                    wxid_found = True
                                 else:
                                     wxid = str(contact_detail['UserName'])
+                                    wxid_found = True
 
-                                all_contact_details[wxid] = contact_detail
-                                if wxid in batch[:3]:  # 只记录前3个，避免日志过多
-                                    logger.info(f"联系人[{wxid}]头像信息: " +
-                                              f"SmallHeadImgUrl={contact_detail.get('SmallHeadImgUrl', 'None')}, " +
-                                              f"BigHeadImgUrl={contact_detail.get('BigHeadImgUrl', 'None')}")
+                            # 如果没有UserName，尝试Username字段
+                            elif 'Username' in contact_detail and contact_detail['Username']:
+                                if isinstance(contact_detail['Username'], dict) and 'string' in contact_detail['Username']:
+                                    wxid = contact_detail['Username']['string']
+                                    wxid_found = True
+                                else:
+                                    wxid = str(contact_detail['Username'])
+                                    wxid_found = True
+
+                            # 如果没有Username，尝试wxid字段
+                            elif 'wxid' in contact_detail and contact_detail['wxid']:
+                                wxid = contact_detail['wxid']
+                                wxid_found = True
+
+                            # 如果没有找到任何ID字段，跳过这个联系人
+                            if not wxid_found:
+                                logger.warning(f"联系人缺少ID字段: {contact_detail}")
+                                continue
+
+                            all_contact_details[wxid] = contact_detail
+                            if wxid in batch[:3]:  # 只记录前3个，避免日志过多
+                                logger.info(f"联系人[{wxid}]头像信息: " +
+                                          f"SmallHeadImgUrl={contact_detail.get('SmallHeadImgUrl', 'None')}, " +
+                                          f"BigHeadImgUrl={contact_detail.get('BigHeadImgUrl', 'None')}")
                     except Exception as e:
                         logger.error(f"获取联系人详情批次失败 ({i}~{i+batch_size-1}): {e}")
                         logger.error(traceback.format_exc())
@@ -4855,25 +5472,51 @@ except:
                     remark = ""
                     avatar = "/static/img/favicon.ico"
 
-                    # 提取昵称 - 处理嵌套结构
-                    if contact_detail and 'NickName' in contact_detail:
-                        if isinstance(contact_detail['NickName'], dict) and 'string' in contact_detail['NickName']:
-                            nickname = contact_detail['NickName']['string'] or username
-                        else:
-                            nickname = str(contact_detail['NickName']) or username
+                    # 提取昵称 - 处理各种可能的字段名称和结构
+                    nickname = ""
+                    if contact_detail:
+                        # 处理NickName字段
+                        if 'NickName' in contact_detail:
+                            if isinstance(contact_detail['NickName'], dict) and 'string' in contact_detail['NickName']:
+                                nickname = contact_detail['NickName']['string']
+                            else:
+                                nickname = str(contact_detail['NickName'])
+                        # 处理nickname字段
+                        elif 'nickname' in contact_detail:
+                            nickname = contact_detail.get('nickname')
 
-                    # 提取备注 - 处理嵌套结构
-                    if contact_detail and 'Remark' in contact_detail:
-                        if isinstance(contact_detail['Remark'], dict) and 'string' in contact_detail['Remark']:
-                            remark = contact_detail['Remark']['string'] or ""
-                        elif isinstance(contact_detail['Remark'], str):
-                            remark = contact_detail['Remark']
+                    # 如果昵称为空，使用用户名
+                    if not nickname:
+                        nickname = username
 
-                    # 提取头像URL - 直接使用URL，无需处理嵌套结构
-                    if contact_detail and 'SmallHeadImgUrl' in contact_detail and contact_detail['SmallHeadImgUrl']:
-                        avatar = contact_detail['SmallHeadImgUrl']
-                    elif contact_detail and 'BigHeadImgUrl' in contact_detail and contact_detail['BigHeadImgUrl']:
-                        avatar = contact_detail['BigHeadImgUrl']
+                    # 提取备注 - 处理各种可能的字段名称和结构
+                    remark = ""
+                    if contact_detail:
+                        # 处理Remark字段
+                        if 'Remark' in contact_detail:
+                            if isinstance(contact_detail['Remark'], dict) and 'string' in contact_detail['Remark']:
+                                remark = contact_detail['Remark']['string']
+                            elif isinstance(contact_detail['Remark'], str):
+                                remark = contact_detail['Remark']
+                        # 处理remark字段
+                        elif 'remark' in contact_detail:
+                            remark = contact_detail.get('remark')
+
+                    # 提取头像 URL - 处理各种可能的字段名称
+                    avatar = "/static/img/favicon.ico"  # 默认头像
+                    if contact_detail:
+                        # 优先使用小头像
+                        if 'SmallHeadImgUrl' in contact_detail and contact_detail['SmallHeadImgUrl']:
+                            avatar = contact_detail['SmallHeadImgUrl']
+                            logger.debug(f"使用SmallHeadImgUrl作为头像: {avatar}")
+                        # 其次使用大头像
+                        elif 'BigHeadImgUrl' in contact_detail and contact_detail['BigHeadImgUrl']:
+                            avatar = contact_detail['BigHeadImgUrl']
+                            logger.debug(f"使用BigHeadImgUrl作为头像: {avatar}")
+                        # 最后尝试avatar字段
+                        elif 'avatar' in contact_detail and contact_detail['avatar']:
+                            avatar = contact_detail['avatar']
+                            logger.debug(f"使用avatar作为头像: {avatar}")
 
                     # 确定显示名称（优先使用备注，其次昵称，最后是wxid）
                     display_name = remark or nickname or username
@@ -4900,9 +5543,17 @@ except:
                     batch_size = 20
                     all_nicknames = {}
 
+                    # 计算总批次数
+                    total_batches = (len(contact_usernames) + batch_size - 1) // batch_size
+                    logger.info(f"联系人总数: {len(contact_usernames)}, 批次大小: {batch_size}, 总批次: {total_batches}")
+
+                    # 不限制批次数量，获取所有联系人
+                    max_batches = total_batches  # 获取所有批次
+
                     # 分批处理联系人
-                    for i in range(0, len(contact_usernames), batch_size):
+                    for i in range(0, min(max_batches * batch_size, len(contact_usernames)), batch_size):
                         batch = contact_usernames[i:i+batch_size]
+                        logger.debug(f"获取联系人昵称批次 {i//batch_size+1}/{total_batches}: {batch}")
                         try:
                             # 调用API获取昵称
                             if asyncio.get_event_loop().is_running():
@@ -4956,15 +5607,35 @@ except:
                     }
                     contact_list.append(contact)
 
+            # 将联系人列表保存到数据库
+            try:
+                # 开始保存前记录时间
+                start_time = time.time()
+                save_contacts_to_db(contact_list)
+                end_time = time.time()
+                logger.info(f"联系人列表已保存到数据库，共{len(contact_list)}个联系人，耗时{end_time-start_time:.2f}秒")
+            except Exception as e:
+                logger.error(f"保存联系人列表到数据库失败: {e}")
+
             # 创建响应数据
             response_data = {
                 "success": True,
                 "data": contact_list,
-                "timestamp": int(time.time())
+                "timestamp": int(time.time()),
+                "pagination": {
+                    "total": len(contact_list),
+                    "page": 1,
+                    "total_pages": 1
+                }
             }
 
             # 将结果缓存到文件
             try:
+                # 缓存文件路径
+                cache_dir = os.path.join("data", "cache")
+                os.makedirs(cache_dir, exist_ok=True)
+                contacts_cache_file = os.path.join(cache_dir, "contacts_cache.json")
+
                 with open(contacts_cache_file, 'w', encoding='utf-8') as f:
                     json.dump(response_data, f, ensure_ascii=False, indent=2)
                 logger.info(f"联系人列表已缓存至 {contacts_cache_file}")
@@ -4986,10 +5657,10 @@ except:
                 "data": []
             })
 
-    # 添加一个请求限制和计数器
+    # 添加一个请求计数器，但不限制请求频率
     request_counters = {}
     request_timestamps = {}
-    REQUEST_RATE_LIMIT = 5  # 每10秒最多5次请求
+    REQUEST_RATE_LIMIT = 999999  # 设置一个极高的值，实际上不限制请求
 
     @app.post('/api/contacts/details', response_class=JSONResponse)
     async def api_contacts_details(request: Request):
@@ -5064,24 +5735,17 @@ except:
 
             logger.info(f"正在获取 {len(wxids)} 个联系人的详情")
 
-            # 尝试首先从缓存中获取联系人信息
-            cache_dir = os.path.join("data", "cache")
-            os.makedirs(cache_dir, exist_ok=True)
-            contacts_cache_file = os.path.join(cache_dir, "contacts_cache.json")
-
-            # 从缓存中加载现有联系人数据
+            # 尝试首先从数据库中获取联系人信息
             cached_contacts = {}
-            if os.path.exists(contacts_cache_file):
-                try:
-                    with open(contacts_cache_file, 'r', encoding='utf-8') as f:
-                        cache_data = json.load(f)
-                        if isinstance(cache_data, dict) and 'data' in cache_data:
-                            for contact in cache_data['data']:
-                                if 'wxid' in contact:
-                                    cached_contacts[contact['wxid']] = contact
-                            logger.info(f"从缓存加载了 {len(cached_contacts)} 个联系人")
-                except Exception as e:
-                    logger.error(f"读取联系人缓存失败: {str(e)}")
+            try:
+                # 从数据库加载所有联系人
+                contacts_from_db = get_contacts_from_db()
+                for contact in contacts_from_db:
+                    if 'wxid' in contact:
+                        cached_contacts[contact['wxid']] = contact
+                logger.info(f"从数据库加载了 {len(cached_contacts)} 个联系人")
+            except Exception as e:
+                logger.error(f"从数据库获取联系人失败: {str(e)}")
 
             # 获取机器人实例
             # 从会话数据中获取wxid
@@ -5174,13 +5838,64 @@ except:
                             detail_item = detail[0]
                             if isinstance(detail_item, dict):
                                 # 提取信息并添加到结果中
+                                # 处理API返回的字段名称不一致的问题
+                                nickname = ""
+                                if 'NickName' in detail_item:
+                                    if isinstance(detail_item['NickName'], dict) and 'string' in detail_item['NickName']:
+                                        nickname = detail_item['NickName']['string']
+                                    else:
+                                        nickname = str(detail_item['NickName'])
+                                elif 'nickname' in detail_item:
+                                    nickname = detail_item.get('nickname')
+
+                                # 记录详细的字段信息以便调试
+                                logger.debug(f"联系人 {wxid} 详情字段: {detail_item.keys()}")
+                                if 'NickName' in detail_item:
+                                    logger.debug(f"联系人 {wxid} NickName类型: {type(detail_item['NickName'])}, 值: {detail_item['NickName']}")
+
+                                # 处理备注
+                                remark = ""
+                                if 'Remark' in detail_item:
+                                    if isinstance(detail_item['Remark'], dict) and 'string' in detail_item['Remark']:
+                                        remark = detail_item['Remark']['string']
+                                    elif isinstance(detail_item['Remark'], str):
+                                        remark = detail_item['Remark']
+                                elif 'remark' in detail_item:
+                                    remark = detail_item.get('remark')
+
+                                # 处理头像
+                                avatar = ""
+                                if 'SmallHeadImgUrl' in detail_item and detail_item['SmallHeadImgUrl']:
+                                    avatar = detail_item['SmallHeadImgUrl']
+                                    logger.debug(f"使用SmallHeadImgUrl作为头像: {avatar}")
+                                elif 'BigHeadImgUrl' in detail_item and detail_item['BigHeadImgUrl']:
+                                    avatar = detail_item['BigHeadImgUrl']
+                                    logger.debug(f"使用BigHeadImgUrl作为头像: {avatar}")
+                                elif 'avatar' in detail_item:
+                                    avatar = detail_item.get('avatar')
+
+                                # 处理微信号
+                                alias = ""
+                                if 'Alias' in detail_item:
+                                    alias = detail_item.get('Alias')
+                                elif 'alias' in detail_item:
+                                    alias = detail_item.get('alias')
+
                                 contact_info = {
                                     'wxid': wxid,
-                                    'nickname': detail_item.get('nickname', wxid),
-                                    'avatar': detail_item.get('avatar', ''),
-                                    'remark': detail_item.get('remark', ''),
-                                    'alias': detail_item.get('alias', '')
+                                    'nickname': nickname or wxid,
+                                    'avatar': avatar or '',
+                                    'remark': remark or '',
+                                    'alias': alias or ''
                                 }
+
+                                # 将联系人信息保存到数据库
+                                try:
+                                    update_contact_in_db(contact_info)
+                                    logger.debug(f"已将联系人 {wxid} 信息保存到数据库")
+                                except Exception as e:
+                                    logger.error(f"保存联系人 {wxid} 到数据库失败: {str(e)}")
+
                                 results.append(contact_info)
                                 success_count += 1
                                 api_count += 1
@@ -5204,13 +5919,64 @@ except:
                                     results.append({'wxid': wxid, 'nickname': wxid, 'error': '详情格式错误'})
                         elif isinstance(detail, dict):
                             # 如果是字典，直接使用
+                            # 处理API返回的字段名称不一致的问题
+
+                            # 记录详细的字段信息以便调试
+                            logger.debug(f"联系人 {wxid} 详情字段: {detail.keys()}")
+
+                            nickname = ""
+                            if 'NickName' in detail:
+                                if isinstance(detail['NickName'], dict) and 'string' in detail['NickName']:
+                                    nickname = detail['NickName']['string']
+                                    logger.debug(f"联系人 {wxid} NickName类型: {type(detail['NickName'])}, 值: {detail['NickName']}")
+                                else:
+                                    nickname = str(detail['NickName'])
+                            elif 'nickname' in detail:
+                                nickname = detail.get('nickname')
+
+                            # 处理备注
+                            remark = ""
+                            if 'Remark' in detail:
+                                if isinstance(detail['Remark'], dict) and 'string' in detail['Remark']:
+                                    remark = detail['Remark']['string']
+                                elif isinstance(detail['Remark'], str):
+                                    remark = detail['Remark']
+                            elif 'remark' in detail:
+                                remark = detail.get('remark')
+
+                            # 处理头像
+                            avatar = ""
+                            if 'SmallHeadImgUrl' in detail and detail['SmallHeadImgUrl']:
+                                avatar = detail['SmallHeadImgUrl']
+                                logger.debug(f"使用SmallHeadImgUrl作为头像: {avatar}")
+                            elif 'BigHeadImgUrl' in detail and detail['BigHeadImgUrl']:
+                                avatar = detail['BigHeadImgUrl']
+                                logger.debug(f"使用BigHeadImgUrl作为头像: {avatar}")
+                            elif 'avatar' in detail:
+                                avatar = detail.get('avatar')
+
+                            # 处理微信号
+                            alias = ""
+                            if 'Alias' in detail:
+                                alias = detail.get('Alias')
+                            elif 'alias' in detail:
+                                alias = detail.get('alias')
+
                             contact_info = {
                                 'wxid': wxid,
-                                'nickname': detail.get('nickname', wxid),
-                                'avatar': detail.get('avatar', ''),
-                                'remark': detail.get('remark', ''),
-                                'alias': detail.get('alias', '')
+                                'nickname': nickname or wxid,
+                                'avatar': avatar or '',
+                                'remark': remark or '',
+                                'alias': alias or ''
                             }
+
+                            # 将联系人信息保存到数据库
+                            try:
+                                update_contact_in_db(contact_info)
+                                logger.debug(f"已将联系人 {wxid} 信息保存到数据库")
+                            except Exception as e:
+                                logger.error(f"保存联系人 {wxid} 到数据库失败: {str(e)}")
+
                             results.append(contact_info)
                             success_count += 1
                             api_count += 1

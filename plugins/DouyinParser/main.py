@@ -1,307 +1,201 @@
-import re
 import tomllib
 import os
-from typing import Dict, Any
-import traceback
-import asyncio
-
+import re
 import aiohttp
+import ssl
+from typing import Dict, Any
+from utils.plugin_base import PluginBase
+from WechatAPI.Client import WechatAPIClient
+from utils.decorators import on_text_message
 from loguru import logger
 
-from WechatAPI import WechatAPIClient
-from utils.decorators import on_text_message
-from utils.plugin_base import PluginBase
-
-
-class DouyinParserError(Exception):
-    """抖音解析器自定义异常基类"""
+class VideoParserError(Exception):
     pass
 
-
 class DouyinParser(PluginBase):
-    description = "抖音无水印解析插件"
-    author = "姜不吃先生"  # 群友太给力了！
-    version = "1.0.2"
+    description = "抖音解析插件"
+    author = "BEelzebub"
+    version = "1.0.0"
 
     def __init__(self):
         super().__init__()
-        self.url_pattern = re.compile(r'https?://v\.douyin\.com/\w+/?')
+        self.load_config()
 
-        # 读取代理配置
-        config_path = os.path.join(os.path.dirname(__file__), "config.toml")
-        try:
-            with open(config_path, "rb") as f:
-                config = tomllib.load(f)
-                
-            # 基础配置
-            basic_config = config.get("basic", {})
-            self.enable = basic_config.get("enable", True)
-            self.http_proxy = basic_config.get("http_proxy", None)
-            
-        except Exception as e:
-            logger.error(f"加载抖音解析器配置文件失败: {str(e)}")
-            self.enable = True
-            self.http_proxy = None
+    def load_config(self):
+        with open("plugins/DouyinParser/config.toml", "rb") as f:
+            config = tomllib.load(f)
 
-        logger.debug("[抖音] 插件初始化完成，代理设置: {}", self.http_proxy)
+        config = config["DouyinParser"]
+        self.enable = config["enable"]
+        self.allowed_groups = config["allowed_groups"]
 
-    def _clean_response_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """清理响应数据"""
-        if not data:
-            return data
-
-        # 使用固定的抖音图标作为封面
-        data[
-            'cover'] = "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/7c/49/e1/7c49e1af-ce92-d1c4-9a93-0a316e47ba94/AppIcon_TikTok-0-0-1x_U007epad-0-1-0-0-85-220.png/512x512bb.jpg"
-
-        return data
-
-    def _clean_url(self, url: str) -> str:
-        """清理URL中的特殊字符"""
-        cleaned_url = url.strip().replace(';', '').replace('\n', '').replace('\r', '')
-        logger.debug("[抖音] 清理后的URL: {}", cleaned_url)  # 添加日志
-        return cleaned_url
-
-    async def _get_real_video_url(self, video_url: str) -> str:
-        """获取真实视频链接"""
-        max_retries = 3  # 最大重试次数
-        retry_delay = 2  # 重试延迟秒数
-        
-        for retry in range(max_retries):
-            try:
-                logger.info("[抖音] 开始获取真实视频链接: {} (第{}次尝试)", video_url, retry + 1)
-                
-                # 修正代理格式
-                proxy = f"http://{self.http_proxy}" if self.http_proxy and not self.http_proxy.startswith(('http://', 'https://')) else self.http_proxy
-                logger.debug("[抖音] 使用代理: {}", proxy)
-                
-                headers = {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-                    'Range': 'bytes=0-'
-                }
-                
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(video_url, 
-                                         proxy=proxy, 
-                                         headers=headers,
-                                         allow_redirects=True, 
-                                         timeout=60) as response:  # 延长超时时间到60秒
-                        if response.status == 200 or response.status == 206:
-                            # 获取所有重定向历史
-                            history = [str(resp.url) for resp in response.history]
-                            real_url = str(response.url)
-                            
-                            # 记录重定向链接历史，用于调试
-                            if history:
-                                logger.debug("[抖音] 重定向历史: {}", history)
-                            
-                            # 检查是否获取到了真实的视频URL
-                            if real_url != video_url and ('v3-' in real_url.lower() or 'douyinvod.com' in real_url.lower()):
-                                logger.info("[抖音] 成功获取真实链接: {}", real_url)
-                                return real_url
-                            else:
-                                logger.warning("[抖音] 未能获取到真实视频链接，准备重试")
-                                if retry < max_retries - 1:  # 如果不是最后一次尝试，则等待后重试
-                                    await asyncio.sleep(retry_delay)
-                                    continue
-                                return video_url
-                        else:
-                            logger.error("[抖音] 获取视频真实链接失败, 状态码: {}", response.status)
-                            logger.debug("[抖音] 响应头: {}", response.headers)
-                            if retry < max_retries - 1:
-                                await asyncio.sleep(retry_delay)
-                                continue
-                            return video_url
-                        
-            except Exception as e:
-                logger.error("[抖音] 获取真实链接失败: {} (第{}次尝试)", str(e), retry + 1)
-                if retry < max_retries - 1:
-                    await asyncio.sleep(retry_delay)
-                    continue
-                return video_url
-        
-        logger.error("[抖音] 获取真实链接失败，已达到最大重试次数")
-        return video_url
-
-    async def _parse_douyin(self, url: str) -> Dict[str, Any]:
-        """调用抖音解析API"""
-        try:
-            api_url = "https://apih.kfcgw50.me/api/douyin"
-            clean_url = self._clean_url(url)
-            params = {
-                'url': clean_url,
-                'type': 'json'
-            }
-
-            logger.debug("[抖音] 请求API: {}, 参数: {}", api_url, repr(params))  # 添加日志
-
-            async with aiohttp.ClientSession() as session:
-                # 使用代理
-                proxy = f"http://{self.http_proxy}" if self.http_proxy and not self.http_proxy.startswith(('http://', 'https://')) else self.http_proxy
-                async with session.get(api_url, params=params, timeout=30, proxy=proxy) as response:  # 使用代理
-                    if response.status != 200:
-                        raise DouyinParserError(f"API请求失败，状态码: {response.status}")
-
-                    data = await response.json()
-                    logger.debug("[抖音] API响应数据: {}", data)  # 添加日志
-
-                    if data.get("code") == 200:
-                        result = data.get("data", {})
-                        if not result:
-                            raise DouyinParserError("API返回数据为空")
-
-                        # 获取真实视频链接
-                        if result.get('video'):
-                            result['video'] = await self._get_real_video_url(result['video'])
-
-                        result = self._clean_response_data(result)
-                        logger.debug("[抖音] 清理后的数据: {}", result)
-                        return result
-                    else:
-                        raise DouyinParserError(data.get("message", "未知错误"))
-
-        except (aiohttp.ClientTimeout, aiohttp.ClientError) as e:
-            logger.error("[抖音] 解析失败: {}", str(e))
-            raise DouyinParserError(str(e))
-        except Exception as e:
-            logger.error("[抖音] 解析过程发生未知错误: {}\n{}", str(e), traceback.format_exc())
-            raise DouyinParserError(f"未知错误: {str(e)}")
-
-    async def _send_test_card(self, bot: WechatAPIClient, chat_id: str, sender: str):
-        """发送测试卡片消息"""
-        try:
-            # 测试数据
-            test_data = {
-                'video': 'https://v11-cold.douyinvod.com/c183ceff049f008265680819dbd8ac0a/67b206c0/video/tos/cn/tos-cn-ve-15/ok8JumeiqAI3pJ2nAiQE9rBiTfm1KtADABlBgV/?a=1128&ch=0&cr=0&dr=0&cd=0%7C0%7C0%7C0&cv=1&br=532&bt=532&cs=0&ds=3&ft=H4NIyvvBQx9Uf8ym8Z.6TQjSYE7OYMDtGkd~P4Aq8_45a&mime_type=video_mp4&qs=0&rc=ZzU5NTRnNDw1aGc5aDloZkBpanE4M3Y5cjNkeDMzNGkzM0AuLy1fLWFhXjQxNjFgYzRiYSNmXzZlMmRjcmdgLS1kLTBzcw%3D%3D&btag=80010e000ad000&cquery=100y&dy_q=1739716635&feature_id=aa7df520beeae8e397df15f38df0454c&l=20250216223715047FF68C05B9F67E1F19',
-                'title': '测试视频标题',
-                'name': '测试作者',
-                'cover': 'https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/7c/49/e1/7c49e1af-ce92-d1c4-9a93-0a316e47ba94/AppIcon_TikTok-0-0-1x_U007epad-0-1-0-0-85-220.png/512x512bb.jpg'
-            }
-
-            logger.info("开始发送测试卡片")
-            logger.debug(f"测试数据: {test_data}")
-
-            # 发送测试卡片
-            await bot.send_link_message(
-                wxid=chat_id,
-                url=test_data['video'],
-                title=f"{test_data['title'][:30]} - {test_data['name'][:10]}",
-                description="这是一个测试卡片消息",
-                thumb_url=test_data['cover']
-            )
-
-            logger.info("测试卡片发送成功")
-
-            # 发送详细信息
-            debug_msg = (
-                "🔍 测试卡片详情:\n"
-                f"视频链接: {test_data['video']}\n"
-                f"封面链接: {test_data['cover']}\n"
-                f"标题: {test_data['title']} - {test_data['name']}"
-            )
-            await bot.send_text_message(
-                wxid=chat_id,
-                content=debug_msg,
-                at=[sender]
-            )
-
-        except Exception as e:
-            error_msg = f"测试卡片发送失败: {str(e)}"
-            logger.error(error_msg)
-            await bot.send_text_message(
-                wxid=chat_id,
-                content=error_msg,
-                at=[sender]
-            )
-
-    @on_text_message(priority=80)
-    async def handle_douyin_links(self, bot: WechatAPIClient, message: dict):
+    @on_text_message(priority=10)
+    async def handle_text(self, bot: WechatAPIClient, message: dict):
         if not self.enable:
-            return True
-
-        content = message['Content']
-        sender = message['SenderWxid']
-        chat_id = message['FromWxid']
-
-        # 添加测试命令识别
-        if content.strip() == "测试卡片":
-            await self._send_test_card(bot, chat_id, sender)
             return
 
+        content = message["Content"].strip()
+        group_id = message["FromWxid"]
+
+        # 检查群聊白名单
+        if "*" not in self.allowed_groups and group_id not in self.allowed_groups:
+            return
+
+        # 检查是否包含抖音分享内容
+        douyin_url = None
+        # 匹配抖音分享文本特征
+        share_pattern = r'复制打开抖音|打开抖音|抖音视频'
+        url_pattern = r'https?://[^\s<>"]+?(?:douyin\.com|iesdouyin\.com)[^\s<>"]*'
+
+        if re.search(share_pattern, content) or re.search(url_pattern, content):
+            # 提取抖音链接
+            match = re.search(url_pattern, content)
+            if match:
+                douyin_url = match.group(0)
+
+        if douyin_url:
+            try:
+                # 直接调用本地解析逻辑
+                result = await self.parse_video(douyin_url)
+                logger.debug(f"抖音解析结果: {result}")
+                # 组装卡片消息
+                await self._send_video_card(bot, group_id, result)
+            except VideoParserError as e:
+                logger.error(f"解析抖音视频失败: {str(e)}")
+                await bot.send_text_message(group_id, f"解析失败: {str(e)}")
+            except Exception as e:
+                logger.error(f"处理抖音链接时发生错误: {str(e)}")
+                await bot.send_text_message(group_id, "解析失败，请稍后重试")
+
+    async def parse_video(self, video_url: str) -> Dict[str, Any]:
+        """解析视频链接"""
         try:
-            # 提取抖音链接并清理
-            match = self.url_pattern.search(content)
-            if not match:
-                return
-
-            original_url = self._clean_url(match.group(0))
-            logger.info(f"发现抖音链接: {original_url}")
-            
-            # 添加解析提示
-            msg_args = {
-                'wxid': chat_id,
-                'content': "检测到抖音分享链接，正在解析无水印视频...\n" if message['IsGroup'] else "检测到抖音分享链接，正在解析无水印视频..."
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1'
             }
-            if message['IsGroup']:
-                msg_args['at'] = [sender]
-            await bot.send_text_message(**msg_args)
 
-            # 解析视频信息
-            video_info = await self._parse_douyin(original_url)
+            # 获取重定向后的真实链接
+            ssl_context = ssl.create_default_context()
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE
+            connector = aiohttp.TCPConnector(ssl=ssl_context)
+            async with aiohttp.ClientSession(connector=connector) as session:
+                async with session.get(video_url, allow_redirects=False) as response:
+                    if response.status == 302:
+                        video_url = response.headers.get('Location')
 
-            if not video_info:
-                raise DouyinParserError("无法获取视频信息")
+                # 获取页面内容
+                async with session.get(video_url, headers=headers) as response:
+                    if response.status != 200:
+                        raise VideoParserError(f"获取页面失败，状态码：{response.status}")
 
-            # 获取视频信息
-            video_url = video_info.get('video', '')
-            title = video_info.get('title', '无标题')
-            author = video_info.get('name', '未知作者')
-            cover = video_info.get('cover', '')
+                    html_content = await response.text()
+                    if not html_content:
+                        raise VideoParserError("页面内容为空")
 
-            if not video_url:
-                raise DouyinParserError("无法获取视频地址")
+                    # 合并后的正则表达式
+                    pattern = re.compile(
+                        r'"play_addr":\s*{\s*"uri":\s*"[^"]*",\s*"url_list":\s*\[([^\]]*)\]'
+                    )
+                    match = pattern.search(html_content)
 
-            # 发送文字版消息
-            text_msg = (
-                f"🎬 解析成功，微信内可直接观看（需ipv6）,浏览器打开可下载保存。\n"
-                f"链接含有有效期，请尽快保存。\n"
-            )
-            if message['IsGroup']:
-                text_msg = text_msg + "\n"
-                await bot.send_text_message(wxid=chat_id, content=text_msg, at=[sender])
-            else:
-                await bot.send_text_message(wxid=chat_id, content=text_msg)
+                    if not match:
+                        raise VideoParserError("未找到视频链接")
 
-            # 发送卡片版消息
-            await bot.send_link_message(
-                wxid=chat_id,
-                url=video_url,
-                title=f"{title[:30]} - {author[:10]}" if author else title[:40],
-                description="点击观看无水印视频",
-                thumb_url=cover
-            )
+                    url_list_str = match.group(1)
+                    urls = [url.strip().strip('"') for url in url_list_str.split(',')]
 
-            logger.info(f"已发送解析结果: 标题[{title}] 作者[{author}]")
+                    if not urls:
+                        raise VideoParserError("视频链接列表为空")
 
-        except DouyinParserError as e:
-            error_msg = str(e) if str(e) else "解析失败"
-            logger.error(f"抖音解析失败: {error_msg}")
-            if message['IsGroup']:
-                await bot.send_text_message(wxid=chat_id, content=f"视频解析失败: {error_msg}\n", at=[sender])
-            else:
-                await bot.send_text_message(wxid=chat_id, content=f"视频解析失败: {error_msg}")
+                    # 解码并处理所有URL
+                    decoded_urls = [url.strip().strip('"').encode().decode('unicode-escape').replace("playwm", "play") for url in urls]
+
+                    # 优先选择aweme.snssdk.com域名的链接
+                    snssdk_urls = [url for url in decoded_urls if 'aweme.snssdk.com' in url]
+                    if not snssdk_urls:
+                        raise VideoParserError("未找到有效的视频源链接")
+
+                    video_url = snssdk_urls[0]
+
+                    # 处理重定向，确保获取最终的视频地址
+                    max_redirects = 3
+                    redirect_count = 0
+
+                    while redirect_count < max_redirects:
+                        async with session.get(video_url, headers=headers, allow_redirects=False) as response:
+                            if response.status == 302:
+                                new_url = response.headers.get('Location')
+                                if 'aweme.snssdk.com' in new_url:
+                                    video_url = new_url
+                                    redirect_count += 1
+                                else:
+                                    break
+                            else:
+                                break
+
+                    if not video_url:
+                        raise VideoParserError("无法获取有效的视频地址")
+
+                    # 提取标题等信息
+                    title_pattern = re.compile(r'"desc":\s*"([^"]+)"')
+                    author_pattern = re.compile(r'"nickname":\s*"([^"]+)"')
+                    cover_pattern = re.compile(r'"cover":\s*{\s*"url_list":\s*\[\s*"([^"]+)"\s*\]\s*}')
+
+                    title_match = title_pattern.search(html_content)
+                    author_match = author_pattern.search(html_content)
+                    cover_match = cover_pattern.search(html_content)
+
+                    return {
+                        "url": video_url,
+                        "title": title_match.group(1) if title_match else "",
+                        "author": author_match.group(1) if author_match else "",
+                        "cover": cover_match.group(1) if cover_match else ""
+                    }
+
+        except aiohttp.ClientError as e:
+            raise VideoParserError(f"网络请求失败：{str(e)}")
         except Exception as e:
-            error_msg = str(e) if str(e) else "未知错误"
-            logger.error(f"抖音解析发生未知错误: {error_msg}")
-            if message['IsGroup']:
-                await bot.send_text_message(wxid=chat_id, content=f"视频解析失败: {error_msg}\n", at=[sender])
-            else:
-                await bot.send_text_message(wxid=chat_id, content=f"视频解析失败: {error_msg}")
+            raise VideoParserError(f"解析过程发生错误：{str(e)}")
 
-    async def async_init(self):
-        """异步初始化函数"""
-        # 可以在这里进行一些异步的初始化操作
-        # 比如测试API可用性等
-        pass
+    async def _send_video_card(self, bot: WechatAPIClient, group_id: str, video_info: dict):
+        try:
+            logger.debug(f"Entering _send_video_card for group {group_id} with video_info: {video_info}")
+            # 使用send_link_message发送视频卡片
+            title = video_info.get("title", "")
+            author = video_info.get("author", "")
+            # 根据是否有作者信息组装标题
+            display_title = f"{title[:30]} - {author[:10]}" if author else title[:40]
+            if not display_title:
+                display_title = "抖音视频"
+
+            video_url = video_info.get('url', '')
+            thumb_url=video_info.get("cover_url", "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/7c/49/e1/7c49e1af-ce92-d1c4-9a93-0a316e47ba94/AppIcon_TikTok-0-0-1x_U007epad-0-1-0-0-85-220.png/512x512bb.jpg")
+            description = "点击观看无水印视频"
+
+            # Add more detailed logging here
+            logger.info(f"Attempting to send link message to {group_id}")
+            logger.info(f"  wxid: {group_id}")
+            logger.info(f"  url: {video_url}")
+            logger.info(f"  title: {display_title}")
+            logger.info(f"  description: {description}")
+            logger.info(f"  thumb_url: {thumb_url}")
+
+            logger.debug(f"准备发送卡片消息到 {group_id}: title='{display_title}', url='{video_url}', thumb_url='{thumb_url}'")
+            logger.debug(f"Calling bot.send_link_message for group {group_id}")
+            await bot.send_link_message(
+                wxid=group_id,
+                url=video_url,
+                title=display_title,
+                description=description,
+                thumb_url=thumb_url
+            )
+            logger.debug(f"Successfully awaited bot.send_link_message for group {group_id}")
+            logger.info(f"成功调用 send_link_message 发送卡片到 {group_id}")
+        except Exception as e:
+            logger.error(f"Error in _send_video_card for group {group_id}", exc_info=True)
+            logger.error(f"发送卡片消息失败: {str(e)}", exc_info=True) # 添加 exc_info=True 获取更详细的堆栈信息
+            # 发送普通文本消息作为备选
+            message = f"视频标题：{video_info.get('title', '未知')}\n视频链接：{video_info.get('url', '')}\n"
+            logger.info(f"尝试发送备选文本消息到 {group_id}")
+            await bot.send_text_message(group_id, message)
