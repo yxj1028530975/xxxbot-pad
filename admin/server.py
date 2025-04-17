@@ -1730,6 +1730,7 @@ def setup_routes():
                     "utils",
                     "version.json",
                     "bot_core.py",
+                    "main_config.toml.example",
                     "main.py"
                 ]
 
