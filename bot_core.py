@@ -172,6 +172,33 @@ async def bot_core():
             logger.error(f"加载855协议客户端失败: {e}")
             logger.warning("回退使用默认客户端")
             bot = WechatAPI.WechatAPIClient("127.0.0.1", api_config.get("port", 9000))
+    elif protocol_version == "ipad":
+        # iPad版本使用Client3
+        try:
+            # 尝试导入Client3
+            import sys
+            import importlib.util
+            client3_path = Path(__file__).resolve().parent / "WechatAPI" / "Client3"
+            if str(client3_path) not in sys.path:
+                sys.path.append(str(client3_path))
+
+            # 检查Client3是否存在
+            if (client3_path / "__init__.py").exists():
+                logger.info("WechatAPI Client3目录存在，使用iPad协议客户端")
+                # 尝试导入客户端3
+                # 使用直接导入的方式
+                from WechatAPI.Client3 import WechatAPIClient as WechatAPIClient3
+
+                # 使用Client3
+                bot = WechatAPIClient3("127.0.0.1", api_config.get("port", 9000))
+                logger.success("成功加载iPad协议客户端")
+            else:
+                logger.warning("WechatAPI Client3目录不存在，回退使用默认客户端")
+                bot = WechatAPI.WechatAPIClient("127.0.0.1", api_config.get("port", 9000))
+        except Exception as e:
+            logger.error(f"加载iPad协议客户端失败: {e}")
+            logger.warning("回退使用默认客户端")
+            bot = WechatAPI.WechatAPIClient("127.0.0.1", api_config.get("port", 9000))
     else:
         # 849版本使用默认Client
         bot = WechatAPI.WechatAPIClient("127.0.0.1", api_config.get("port", 9000))
@@ -247,7 +274,12 @@ async def bot_core():
                             # 这样我们可以更好地控制错误处理
                             async with aiohttp.ClientSession() as session:
                                 # 根据协议版本选择不同的 API 路径
-                                api_base = "/api" if protocol_version == "855" else "/VXAPI"
+                                if protocol_version == "855":
+                                    api_base = "/api"
+                                elif protocol_version == "ipad":
+                                    api_base = "/api"
+                                else:
+                                    api_base = "/VXAPI"
                                 api_url = f'http://127.0.0.1:{api_config.get("port", 9000)}{api_base}/Login/Awaken'
 
                                 # 准备请求参数

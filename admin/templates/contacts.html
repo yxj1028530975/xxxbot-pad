@@ -157,25 +157,9 @@
         margin-top: 5px;
     }
 
-    /* 修复模态框样式 */
-    .modal {
+    /* 联系人模态框样式 - 不覆盖全局样式 */
+    .contacts-modal {
         background: rgba(0, 0, 0, 0.5);
-        overflow-y: auto !important; /* 确保模态框可滚动 */
-    }
-
-    .modal-backdrop {
-        display: none !important;
-    }
-
-    .modal-dialog {
-        margin: 1.75rem auto;
-        max-width: 800px;
-    }
-
-    /* 修复模态框滚动问题 */
-    .modal-open {
-        overflow: auto !important;
-        padding-right: 0 !important;
     }
 
     .modal-content {
@@ -205,15 +189,8 @@
 
     /* 移除所有自定义对话框和遮罩 */
     .custom-dialog-overlay,
-    .custom-dialog,
-    .modal-backdrop {
+    .custom-dialog {
         display: none !important;
-    }
-
-    /* 修复body样式 */
-    body.modal-open {
-        overflow: auto !important;
-        padding-right: 0 !important;
     }
 
     /* 联系人详情卡片样式 */
@@ -574,7 +551,7 @@
 
 <!-- 发送消息模态框 -->
 <div class="modal fade" id="send-message-modal" tabindex="-1" aria-labelledby="send-message-modal-label" aria-hidden="true">
-    <div class="modal-dialog">
+    <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title" id="send-message-modal-label">发送消息</h5>
@@ -766,7 +743,7 @@
 {% block modals %}
 <!-- 联系人详情模态框 -->
 <div class="modal" id="contact-detail-modal" tabindex="-1" aria-labelledby="contact-detail-title" aria-hidden="true">
-    <div class="modal-dialog modal-lg">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title" id="contact-detail-title">联系人详情</h5>
@@ -1632,8 +1609,8 @@
         // 隐藏分页控件
         $('#contacts-pagination').hide();
 
-        // 初始加载联系人，使用refresh=true从微信API获取最新数据
-        loadContacts(true);
+        // 初始加载联系人，使用refresh=false从数据库加载数据
+        loadContacts(false);
 
         // 点击过滤器
         $('.list-group-item[data-filter]').click(function(e) {

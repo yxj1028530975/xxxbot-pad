@@ -197,6 +197,7 @@
                                             <ul class="dropdown-menu">
                                                 <li><a class="dropdown-item protocol-option" href="#" data-value="849">849协议</a></li>
                                                 <li><a class="dropdown-item protocol-option" href="#" data-value="855">855协议</a></li>
+                                                <li><a class="dropdown-item protocol-option" href="#" data-value="ipad">iPad协议</a></li>
                                             </ul>
                                         </div>
                                     </div>
@@ -599,7 +600,7 @@
                     const configText = data.content;
 
                     // 提取协议版本
-                    const protocolMatch = configText.match(/version\s*=\s*"(\d+)"/i);
+                    const protocolMatch = configText.match(/version\s*=\s*"([^"]+)"/i);
                     const protocolVersion = protocolMatch ? protocolMatch[1] : '849';
 
                     // 提取消息过滤模式
@@ -664,7 +665,7 @@
 
         // 替换协议版本
         if (protocolVersion) {
-            configText = configText.replace(/version\s*=\s*"\d+"/i, `version = "${protocolVersion}"`);
+            configText = configText.replace(/version\s*=\s*"[^"]+"/i, `version = "${protocolVersion}"`);
         }
 
         // 替换消息过滤模式

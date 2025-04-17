@@ -47,9 +47,9 @@ PROTOCOL_VERSION="849"  # 默认使用849协议
 
 # 检查配置文件是否存在
 if [ -f "/app/main_config.toml" ]; then
-    # 直接使用awk提取Protocol部分中的version值
-    # 这种方法更可靠，可以准确地提取配置值
-    EXTRACTED_VERSION=$(awk '/\[Protocol\]/{flag=1; next} /\[/{flag=0} flag && /version *=/{gsub(/[^0-9]/, "", $3); print $3}' /app/main_config.toml)
+    # 使用grep和awk提取Protocol部分中的version值
+    # 这种方法可以提取字符串值，包括非数字的协议版本
+    EXTRACTED_VERSION=$(grep -A 5 '\[Protocol\]' /app/main_config.toml | grep 'version' | awk -F '"' '{print $2}')
 
     if [ ! -z "$EXTRACTED_VERSION" ]; then
         PROTOCOL_VERSION="$EXTRACTED_VERSION"
@@ -77,6 +77,10 @@ if [[ "$CLEAN_VERSION" == "855" ]]; then
     # 855版本使用pad2目录
     PAD_SERVICE_PATH="/app/849/pad2/linuxService"
     echo "使用855协议服务路径: $PAD_SERVICE_PATH"
+elif [[ "$CLEAN_VERSION" == "ipad" ]]; then
+    # ipad版本使用pad3目录
+    PAD_SERVICE_PATH="/app/849/pad3/linuxService"
+    echo "使用iPad协议服务路径: $PAD_SERVICE_PATH"
 else
     # 849版本使用pad目录
     PAD_SERVICE_PATH="/app/849/pad/linuxService"

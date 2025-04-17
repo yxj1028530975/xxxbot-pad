@@ -256,6 +256,19 @@
             padding: 15px 20px;
         }
 
+        /* 确保模态框居中且大小合适 */
+        .modal-dialog {
+            max-width: 80%;
+            margin: 1.75rem auto;
+        }
+
+        /* 确保模态框在显示时居中 */
+        .modal.show {
+            display: flex !important;
+            align-items: center;
+            justify-content: center;
+        }
+
         .modal-title {
             font-weight: 600;
             display: flex;
@@ -440,7 +453,7 @@
     </div>
     <!-- 插件配置模态框 -->
     <div class="modal" id="plugin-config-modal" tabindex="-1" aria-labelledby="plugin-config-title" aria-hidden="true">
-        <div class="modal-dialog modal-lg">
+        <div class="modal-dialog modal-dialog-centered modal-lg">
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title" id="plugin-config-title"></h5>
@@ -602,7 +615,7 @@
                 }
 
                 const modal = new bootstrap.Modal(modalEl, {
-                    backdrop: false,
+                    backdrop: true,
                     keyboard: true
                 });
                 modal.show();
