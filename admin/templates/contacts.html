@@ -447,12 +447,17 @@
 
                         <!-- 群公告 -->
                         <div id="group-info-section" class="mb-4 d-none">
-                            <h6 class="mb-3">群公告</h6>
+                            <div class="d-flex justify-content-between align-items-center mb-3">
+                                <h6 class="mb-0">群公告</h6>
+                                <button id="view-group-members-btn" class="btn btn-sm btn-outline-primary">
+                                    <i class="bi bi-people"></i> 查看群成员
+                                </button>
+                            </div>
                             <div class="announcement-card">
                                 <div id="group-announcement-content" class="text-muted">暂无群公告</div>
-                                    </div>
-                                </div>
                             </div>
+                        </div>
+                    </div>
 
                     <!-- 消息历史 (已隐藏) -->
                     <div id="message-history-section">
@@ -767,6 +772,29 @@
             <div class="modal-body" id="group-members-content">
                 <!-- 内容将通过JavaScript动态加载 -->
             </div>
+        </div>
+    </div>
+</div>
+
+<!-- 群成员详情模态框 -->
+<div class="modal" id="member-detail-modal" tabindex="-1" aria-labelledby="member-detail-title" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="member-detail-title">成员详情</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+            </div>
+            <div class="modal-body" id="member-detail-content">
+                <!-- 内容将通过JavaScript动态加载 -->
+                <div class="text-center p-5">
+                    <i class="bi bi-arrow-repeat spin"></i> 正在加载成员详情...
+                </div>
+            </div>
+            <!-- 移除底部按钮栏 -->
+            <!-- <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" id="back-to-members-btn-footer">返回</button>
+                <button type="button" class="btn btn-primary" id="send-to-member-btn">发送消息</button>
+            </div> -->
         </div>
     </div>
 </div>
@@ -1466,7 +1494,7 @@
                     // 更新UI显示
                     if (response.announcement) {
                         $('#group-announcement-content').text(response.announcement);
-            } else {
+                    } else {
                         $('#group-announcement-content').text('暂无群公告');
                     }
                 } else {
@@ -1478,6 +1506,168 @@
                 console.error('群公告请求错误:', status, error);
                 $('#group-announcement-content').html(`<div class="text-danger">获取群公告失败: ${error || '网络错误'}</div>`);
             }
+        });
+    }
+
+    // 获取群成员列表
+    function fetchGroupMembers(wxid) {
+        console.log('获取群成员列表, 群ID:', wxid);
+
+        // 显示加载状态
+        $('#group-members-content').html('<div class="text-center p-5"><i class="bi bi-arrow-repeat fa-spin me-2"></i>正在加载群成员...</div>');
+
+        // 显示模态框
+        const modal = new bootstrap.Modal(document.getElementById('group-members-modal'));
+        modal.show();
+
+        // 设置模态框标题
+        const contact = contacts.find(c => c.wxid === wxid);
+        const groupName = contact ? (contact.nickname || contact.name || wxid) : wxid;
+        $('#group-members-title').text(`${groupName} - 群成员列表`);
+
+        // 调用API获取群成员
+        $.ajax({
+            url: '/api/group/members',
+            type: 'POST',
+            data: JSON.stringify({ wxid: wxid }),
+            contentType: 'application/json',
+            success: function(response) {
+                console.log('群成员API返回:', response);
+
+                if (response.success && response.data) {
+                    const members = response.data;
+
+                    // 更新联系人对象中的群成员
+                    const contact = contacts.find(c => c.wxid === wxid);
+                    if (contact) {
+                        contact.members = members;
+                    }
+
+                    // 渲染群成员列表
+                    renderGroupMembers(members, wxid);
+                } else {
+                    console.error('获取群成员失败:', response.error);
+                    $('#group-members-content').html(`<div class="text-center p-5 text-danger">
+                        <i class="bi bi-exclamation-triangle me-2"></i>
+                        获取群成员失败: ${response.error || '未知错误'}
+                    </div>`);
+                }
+            },
+            error: function(xhr, status, error) {
+                console.error('群成员请求错误:', status, error);
+                $('#group-members-content').html(`<div class="text-center p-5 text-danger">
+                    <i class="bi bi-exclamation-triangle me-2"></i>
+                    获取群成员失败: ${error || '网络错误'}
+                </div>`);
+            }
+        });
+    }
+
+    // 渲染群成员列表
+    function renderGroupMembers(members, group_wxid) {
+        const container = $('#group-members-content');
+        container.empty();
+
+        if (!members || members.length === 0) {
+            container.html('<div class="text-center p-5 text-muted">没有找到群成员信息</div>');
+            return;
+        }
+
+        // 将群ID保存到容器上，以便后续使用
+        container.data('group-wxid', group_wxid);
+
+        // 添加搜索框
+        container.append(`
+            <div class="mb-3">
+                <div class="input-group">
+                    <input type="text" class="form-control" id="group-member-search" placeholder="搜索群成员...">
+                    <button class="btn btn-outline-secondary" type="button" id="group-member-search-btn">
+                        <i class="bi bi-search"></i>
+                    </button>
+                </div>
+            </div>
+        `);
+
+        // 添加成员计数
+        container.append(`<div class="mb-3">共 <span class="fw-bold">${members.length}</span> 位群成员</div>`);
+
+        // 创建成员列表容器
+        const membersList = $('<div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-3" id="group-members-list"></div>');
+        container.append(membersList);
+
+        // 渲染每个成员
+        members.forEach(member => {
+            // 处理各种可能的字段名称
+            const wxid = member.wxid || member.Wxid || member.UserName || '';
+
+            // 根据API返回的数据结构选择昵称
+            let displayName = wxid;
+            if (member.DisplayName && member.DisplayName !== '') {
+                displayName = member.DisplayName;
+            } else if (member.NickName && member.NickName !== '') {
+                displayName = member.NickName;
+            } else if (member.nickname) {
+                displayName = member.nickname;
+            } else if (member.name) {
+                displayName = member.name;
+            }
+
+            // 处理头像字段
+            let avatar = '/static/img/default-avatar.png';
+            if (member.BigHeadImgUrl) {
+                avatar = member.BigHeadImgUrl;
+            } else if (member.SmallHeadImgUrl) {
+                avatar = member.SmallHeadImgUrl;
+            } else if (member.avatar) {
+                avatar = member.avatar;
+            } else if (member.HeadImgUrl) {
+                avatar = member.HeadImgUrl;
+            }
+
+            const memberCard = $(`
+                <div class="col member-item" data-wxid="${wxid}" data-nickname="${displayName}">
+                    <div class="card h-100 cursor-pointer" onclick="showMemberDetail('${wxid}', '${group_wxid}')">
+                        <div class="card-body d-flex align-items-center">
+                            <img src="${avatar}" alt="${displayName}" class="me-3" style="width: 48px; height: 48px; border-radius: 24px;">
+                            <div>
+                                <h6 class="card-title mb-1">${displayName}</h6>
+                                <p class="card-text small text-muted mb-0">${wxid}</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `);
+
+            membersList.append(memberCard);
+        });
+
+        // 添加搜索功能
+        $('#group-member-search').on('input', function() {
+            const keyword = $(this).val().toLowerCase();
+            $('.member-item').each(function() {
+                const wxid = $(this).data('wxid').toLowerCase();
+                const nickname = $(this).data('nickname').toLowerCase();
+
+                if (wxid.includes(keyword) || nickname.includes(keyword)) {
+                    $(this).show();
+                } else {
+                    $(this).hide();
+                }
+            });
+        });
+
+        $('#group-member-search-btn').click(function() {
+            const keyword = $('#group-member-search').val().toLowerCase();
+            $('.member-item').each(function() {
+                const wxid = $(this).data('wxid').toLowerCase();
+                const nickname = $(this).data('nickname').toLowerCase();
+
+                if (wxid.includes(keyword) || nickname.includes(keyword)) {
+                    $(this).show();
+                } else {
+                    $(this).hide();
+                }
+            });
         });
     }
 
@@ -1713,6 +1903,15 @@
 
                 // 启用发送消息按钮
                 $('#send-message-btn').prop('disabled', false);
+            }
+        });
+
+        // 点击查看群成员按钮
+        $(document).on('click', '#view-group-members-btn', function() {
+            if (currentContactId && currentContactId.endsWith('@chatroom')) {
+                fetchGroupMembers(currentContactId);
+            } else {
+                alert('只有群聊才能查看群成员');
             }
         });
 
@@ -2907,6 +3106,157 @@
                 $('#reminder-contacts-list').css('overflow-y', 'auto');
             }, 100);
         });
+    }
+
+    // 显示群成员详情
+    function showMemberDetail(member_wxid, group_wxid) {
+        console.log(`显示群 ${group_wxid} 成员 ${member_wxid} 的详细信息`);
+
+        // 显示模态框
+        const memberDetailModal = new bootstrap.Modal(document.getElementById('member-detail-modal'));
+        memberDetailModal.show();
+
+        // 显示加载状态
+        $('#member-detail-content').html(`
+            <div class="text-center p-5">
+                <i class="bi bi-arrow-repeat spin"></i> 正在加载成员详情...
+            </div>
+        `);
+
+        // 移除发送消息按钮和底部返回按钮的事件绑定
+
+        // 请求成员详细信息
+        $.ajax({
+            url: '/api/group/member/detail',
+            type: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({
+                group_wxid: group_wxid,
+                member_wxid: member_wxid
+            }),
+            success: function(response) {
+                if (response.success) {
+                    console.log('成功获取群成员详情:', response.data);
+                    renderMemberDetail(response.data, response.source);
+                } else {
+                    console.error('获取群成员详情失败:', response.error);
+                    $('#member-detail-content').html(`
+                        <div class="alert alert-danger">
+                            <i class="bi bi-exclamation-triangle me-2"></i>
+                            获取成员详情失败: ${response.error || '未知错误'}
+                        </div>
+                    `);
+                }
+            },
+            error: function(xhr, status, error) {
+                console.error('请求群成员详情失败:', error);
+                $('#member-detail-content').html(`
+                    <div class="alert alert-danger">
+                        <i class="bi bi-exclamation-triangle me-2"></i>
+                        请求失败: ${error || '网络错误'}
+                    </div>
+                `);
+            }
+        });
+    }
+
+    // 渲染群成员详情
+    function renderMemberDetail(member, source) {
+        // 更新模态框标题
+        const displayName = member.display_name || member.nickname || member.wxid;
+        $('#member-detail-title').text(`成员详情: ${displayName}`);
+
+        // 准备头像 URL
+        const avatar = member.avatar || '/static/img/default-avatar.png';
+
+        // 渲染详情内容
+        const detailHtml = `
+            <div class="text-center mb-4">
+                <img src="${avatar}" alt="${displayName}" class="rounded-circle mb-3" style="width: 100px; height: 100px;">
+                <h4>${displayName}</h4>
+                <p class="text-muted">${member.wxid}</p>
+                ${source === 'database' ? '<span class="badge bg-secondary">来自数据库</span>' : '<span class="badge bg-primary">来自API</span>'}
+            </div>
+
+            <div class="card mb-3">
+                <div class="card-header bg-light">基本信息</div>
+                <div class="card-body">
+                    <div class="row mb-2">
+                        <div class="col-4 text-muted">微信ID:</div>
+                        <div class="col-8">${member.wxid}</div>
+                    </div>
+                    <div class="row mb-2">
+                        <div class="col-4 text-muted">昵称:</div>
+                        <div class="col-8">${member.nickname || '无'}</div>
+                    </div>
+                    <div class="row mb-2">
+                        <div class="col-4 text-muted">群昵称:</div>
+                        <div class="col-8">${member.display_name || '无'}</div>
+                    </div>
+                    <div class="row mb-2">
+                        <div class="col-4 text-muted">邀请人:</div>
+                        <div class="col-8">${member.inviter_wxid || '未知'}</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="d-grid gap-2">
+                <button type="button" class="btn btn-secondary" id="back-to-members-btn">
+                    <i class="bi bi-arrow-left me-2"></i>返回
+                </button>
+            </div>
+        `;
+
+        // 更新内容
+        $('#member-detail-content').html(detailHtml);
+
+        // 绑定返回按钮事件
+        $('#back-to-members-btn').off('click').on('click', function() {
+            // 关闭当前模态框
+            const memberDetailModal = bootstrap.Modal.getInstance(document.getElementById('member-detail-modal'));
+            memberDetailModal.hide();
+            // 重新显示群成员模态框
+            const groupMembersModal = new bootstrap.Modal(document.getElementById('group-members-modal'));
+            groupMembersModal.show();
+        });
+
+        // 移除底部按钮栏的事件绑定
+    }
+
+    // 打开发送消息模态框
+    function openSendMessageModal(wxid) {
+        // 如果已经有发送消息模态框，直接使用
+        if ($('#send-message-modal').length > 0) {
+            // 设置接收者
+            $('#recipient-wxid').val(wxid);
+            // 显示模态框
+            const sendMessageModal = new bootstrap.Modal(document.getElementById('send-message-modal'));
+            sendMessageModal.show();
+        } else {
+            // 如果没有模态框，创建一个简单的提示
+            alert(`请在聊天页面与 ${wxid} 联系`);
+        }
+    }
+
+    // 将联系人数据库全部更新
+    function updateAllContacts() {
+        if (confirm('确定要更新所有联系人信息吗？这可能需要一些时间。')) {
+            $.ajax({
+                url: '/api/contacts/update_all',
+                type: 'POST',
+                dataType: 'json',
+                success: function(response) {
+                    if (response.success) {
+                        alert('已开始更新所有联系人信息，请稍后刷新页面查看结果。');
+                    } else {
+                        alert('更新失败: ' + response.error);
+                    }
+                },
+                error: function(xhr, status, error) {
+                    alert('请求失败: ' + error);
+                }
+            });
+        }
     }
 </script>
 {% endblock %}

@@ -170,8 +170,7 @@ class VideoSender(PluginBase):
             with open(thumbnail_path, "rb") as image_file:
                 image_data = image_file.read()
                 image_base64 = base64.b64encode(image_data).decode("utf-8")
-                # 添加数据URL前缀
-                return "data:image/jpeg;base64," + image_base64
+                return image_base64
 
         except FileNotFoundError:
             logger.error("ffmpeg 未找到，无法提取缩略图")
@@ -229,7 +228,7 @@ class VideoSender(PluginBase):
                                 logger.debug(f"图片 Base64 长度: {len(image_base64) if image_base64 else '无效'}")
 
                                 # 发送视频消息
-                                await bot.send_video_message(chat_id, video=video_base64, image=image_base64)
+                                await bot.send_video_message(chat_id, video=video_base64, image=image_base64 or "None")
                                 logger.info(f"成功发送视频到 {chat_id}")
 
                             except binascii.Error as e:
