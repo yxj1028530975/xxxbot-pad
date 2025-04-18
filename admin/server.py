@@ -6058,20 +6058,414 @@ except:
     # 在setup_routes()函数内部添加群聊API
     @app.post("/api/group/members", response_class=JSONResponse)
     async def api_group_members(request: Request):
-        """获取群聊成员列表 - 已禁用"""
+        """获取群聊成员列表"""
         # 检查用户是否已登录
         username = await check_auth(request)
         if not username:
             return JSONResponse(
                 status_code=401,
-                content={"code": 401, "msg": "未登录"}
+                content={"success": False, "error": "未登录，请先登录"}
             )
 
-        # 该功能已禁用，直接返回空结果
-        logger.info(f"群成员获取功能已被禁用，返回空数据")
-        return JSONResponse(
-            content={"code": 0, "data": [], "message": "群成员获取功能已禁用"}
-        )
+        try:
+            # 解析请求数据
+            data = await request.json()
+            wxid = data.get("wxid")
+
+            if not wxid:
+                return JSONResponse(
+                    content={"success": False, "error": "缺少群聊ID(wxid)参数"}
+                )
+
+            # 只有群才能获取成员
+            if not wxid.endswith("@chatroom"):
+                return JSONResponse(
+                    content={"success": False, "error": "无效的群ID，只有群聊才能获取成员"}
+                )
+
+            # 确保机器人实例可用
+            bot_instance = get_bot_instance()
+            if not bot_instance:
+                logger.error("bot_instance未设置或不可用")
+                return JSONResponse(
+                    content={"success": False, "error": "机器人实例未初始化，请确保机器人已启动"}
+                )
+
+            # 调用API获取群成员
+            try:
+                logger.info(f"正在获取群 {wxid} 的成员列表")
+                import asyncio
+
+                # 调用API获取群成员
+                if asyncio.get_event_loop().is_running():
+                    members = await bot_instance.get_chatroom_member_list(wxid)
+                else:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    try:
+                        members = loop.run_until_complete(bot_instance.get_chatroom_member_list(wxid))
+                    finally:
+                        loop.close()
+
+                logger.info(f"成功获取群 {wxid} 的成员列表，共 {len(members)} 个成员")
+
+                # 处理成员数据，确保字段名称一致性
+                processed_members = []
+                for member in members:
+                    processed_member = {}
+
+                    # 处理wxid字段
+                    if 'UserName' in member:
+                        processed_member['wxid'] = member['UserName']
+                    elif 'Wxid' in member:
+                        processed_member['wxid'] = member['Wxid']
+                    elif 'wxid' in member:
+                        processed_member['wxid'] = member['wxid']
+                    else:
+                        processed_member['wxid'] = ''
+
+                    # 处理昵称字段
+                    if 'DisplayName' in member and member['DisplayName']:
+                        processed_member['display_name'] = member['DisplayName']
+                    elif 'display_name' in member:
+                        processed_member['display_name'] = member['display_name']
+                    else:
+                        processed_member['display_name'] = ''
+
+                    if 'NickName' in member and member['NickName']:
+                        processed_member['nickname'] = member['NickName']
+                    elif 'nickname' in member:
+                        processed_member['nickname'] = member['nickname']
+                    else:
+                        processed_member['nickname'] = processed_member['wxid']
+
+                    # 处理头像字段
+                    if 'BigHeadImgUrl' in member and member['BigHeadImgUrl']:
+                        processed_member['avatar'] = member['BigHeadImgUrl']
+                    elif 'SmallHeadImgUrl' in member and member['SmallHeadImgUrl']:
+                        processed_member['avatar'] = member['SmallHeadImgUrl']
+                    elif 'HeadImgUrl' in member and member['HeadImgUrl']:
+                        processed_member['avatar'] = member['HeadImgUrl']
+                    elif 'avatar' in member:
+                        processed_member['avatar'] = member['avatar']
+                    else:
+                        processed_member['avatar'] = '/static/img/default-avatar.png'
+
+                    # 处理邀请人字段
+                    if 'InviterUserName' in member and member['InviterUserName']:
+                        processed_member['inviter_wxid'] = member['InviterUserName']
+                    elif 'inviter_wxid' in member:
+                        processed_member['inviter_wxid'] = member['inviter_wxid']
+                    else:
+                        processed_member['inviter_wxid'] = ''
+
+                    # 保留原始数据以便调试
+                    processed_member['raw_data'] = member
+
+                    processed_members.append(processed_member)
+
+                # 尝试将群成员保存到数据库
+                try:
+                    from database.group_members_db import save_group_members_to_db
+                    save_result = save_group_members_to_db(wxid, members)
+                    if save_result:
+                        logger.info(f"成功将群 {wxid} 的 {len(members)} 个成员保存到数据库")
+                    else:
+                        logger.warning(f"将群 {wxid} 的成员保存到数据库失败")
+                except Exception as e:
+                    logger.error(f"将群成员保存到数据库时出错: {str(e)}")
+
+                # 返回处理后的成员列表
+                return JSONResponse(
+                    content={
+                        "success": True,
+                        "data": processed_members
+                    }
+                )
+            except Exception as e:
+                logger.error(f"获取群成员列表时出错: {e}")
+                return JSONResponse(
+                    content={"success": False, "error": f"获取群成员列表失败: {str(e)}"}
+                )
+
+        except Exception as e:
+            logger.error(f"处理获取群成员请求时出错: {str(e)}")
+            return JSONResponse(
+                content={"success": False, "error": f"服务器错误: {str(e)}"}
+            )
+
+    @app.post("/api/group/member/detail", response_class=JSONResponse)
+    async def api_group_member_detail(request: Request):
+        """获取群成员详细信息"""
+        # 检查用户是否已登录
+        username = await check_auth(request)
+        if not username:
+            return JSONResponse(
+                status_code=401,
+                content={"success": False, "error": "未登录，请先登录"}
+            )
+
+        try:
+            # 获取请求数据
+            data = await request.json()
+            group_wxid = data.get("group_wxid")
+            member_wxid = data.get("member_wxid")
+
+            if not group_wxid or not member_wxid:
+                return JSONResponse(
+                    content={"success": False, "error": "缺少必要参数"}
+                )
+
+            logger.info(f"获取群 {group_wxid} 成员 {member_wxid} 的详细信息")
+
+            # 先从数据库中获取成员信息
+            from database.group_members_db import get_group_member_from_db
+            member_info = get_group_member_from_db(group_wxid, member_wxid)
+
+            if member_info:
+                logger.info(f"从数据库中获取到群成员信息: {member_info}")
+                return JSONResponse(
+                    content={
+                        "success": True,
+                        "data": member_info,
+                        "source": "database"
+                    }
+                )
+
+            # 如果数据库中没有，尝试从微信API获取
+            logger.info(f"数据库中没有群成员信息，尝试从微信API获取")
+
+            # 获取机器人实例
+            bot_instance = get_bot_instance()
+            if not bot_instance:
+                return JSONResponse(
+                    content={"success": False, "error": "机器人实例不存在"}
+                )
+
+            # 先获取群成员列表
+            import asyncio
+            if asyncio.get_event_loop().is_running():
+                members = await bot_instance.get_chatroom_member_list(group_wxid)
+            else:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    members = loop.run_until_complete(bot_instance.get_chatroom_member_list(group_wxid))
+                finally:
+                    loop.close()
+
+            # 在群成员列表中查找指定成员
+            member_info = None
+            for member in members:
+                member_id = member.get("wxid") or member.get("Wxid") or member.get("UserName") or ""
+                if member_id == member_wxid:
+                    member_info = member
+                    break
+
+            if not member_info:
+                return JSONResponse(
+                    content={"success": False, "error": f"在群 {group_wxid} 中未找到成员 {member_wxid}"}
+                )
+
+            # 处理成员信息
+            processed_member = {}
+
+            # 处理wxid字段
+            processed_member['wxid'] = member_wxid
+
+            # 处理昵称字段
+            if 'DisplayName' in member_info and member_info['DisplayName']:
+                processed_member['display_name'] = member_info['DisplayName']
+            elif 'display_name' in member_info:
+                processed_member['display_name'] = member_info['display_name']
+            else:
+                processed_member['display_name'] = ''
+
+            if 'NickName' in member_info and member_info['NickName']:
+                processed_member['nickname'] = member_info['NickName']
+            elif 'nickname' in member_info:
+                processed_member['nickname'] = member_info['nickname']
+            else:
+                processed_member['nickname'] = member_wxid
+
+            # 处理头像字段
+            if 'BigHeadImgUrl' in member_info and member_info['BigHeadImgUrl']:
+                processed_member['avatar'] = member_info['BigHeadImgUrl']
+            elif 'SmallHeadImgUrl' in member_info and member_info['SmallHeadImgUrl']:
+                processed_member['avatar'] = member_info['SmallHeadImgUrl']
+            elif 'HeadImgUrl' in member_info and member_info['HeadImgUrl']:
+                processed_member['avatar'] = member_info['HeadImgUrl']
+            elif 'avatar' in member_info:
+                processed_member['avatar'] = member_info['avatar']
+            else:
+                processed_member['avatar'] = '/static/img/default-avatar.png'
+
+            # 处理邀请人字段
+            if 'InviterUserName' in member_info and member_info['InviterUserName']:
+                processed_member['inviter_wxid'] = member_info['InviterUserName']
+            elif 'inviter_wxid' in member_info:
+                processed_member['inviter_wxid'] = member_info['inviter_wxid']
+            else:
+                processed_member['inviter_wxid'] = ''
+
+            # 保存到数据库
+            from database.group_members_db import update_group_member_in_db
+            update_result = update_group_member_in_db(group_wxid, processed_member)
+            if update_result:
+                logger.info(f"成功将群成员信息保存到数据库")
+            else:
+                logger.warning(f"将群成员信息保存到数据库失败")
+
+            # 返回处理后的成员信息
+            return JSONResponse(
+                content={
+                    "success": True,
+                    "data": processed_member,
+                    "source": "api"
+                }
+            )
+
+        except Exception as e:
+            logger.error(f"获取群成员详细信息时出错: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return JSONResponse(
+                content={"success": False, "error": f"获取群成员详细信息失败: {str(e)}"}
+            )
+
+        try:
+            # 解析请求数据
+            data = await request.json()
+            wxid = data.get("wxid")
+
+            if not wxid:
+                return JSONResponse(
+                    content={"success": False, "error": "缺少群聊ID(wxid)参数"}
+                )
+
+            # 只有群才能获取成员
+            if not wxid.endswith("@chatroom"):
+                return JSONResponse(
+                    content={"success": False, "error": "无效的群ID，只有群聊才能获取成员"}
+                )
+
+            # 确保机器人实例可用
+            if not bot_instance or not hasattr(bot_instance, 'bot'):
+                logger.error("bot_instance未设置或不可用")
+                return JSONResponse(
+                    content={"success": False, "error": "机器人实例未初始化，请确保机器人已启动"}
+                )
+
+            # 检查方法是否存在
+            if not hasattr(bot_instance, 'get_chatroom_member_list'):
+                logger.error("bot_instance.get_chatroom_member_list方法不存在")
+                return JSONResponse(
+                    content={"success": False, "error": "微信API不支持获取群成员列表"}
+                )
+
+            # 调用API获取群成员
+            try:
+                logger.info(f"正在获取群 {wxid} 的成员列表")
+                import asyncio
+
+                # 调用API获取群成员
+                if asyncio.get_event_loop().is_running():
+                    members = await bot_instance.get_chatroom_member_list(wxid)
+                else:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    try:
+                        members = loop.run_until_complete(bot_instance.get_chatroom_member_list(wxid))
+                    finally:
+                        loop.close()
+
+                logger.info(f"成功获取群 {wxid} 的成员列表，共 {len(members)} 个成员")
+
+                # 处理成员数据，确保字段名称一致性
+                processed_members = []
+                for member in members:
+                    processed_member = {}
+
+                    # 处理wxid字段
+                    if 'UserName' in member:
+                        processed_member['wxid'] = member['UserName']
+                    elif 'Wxid' in member:
+                        processed_member['wxid'] = member['Wxid']
+                    elif 'wxid' in member:
+                        processed_member['wxid'] = member['wxid']
+                    else:
+                        processed_member['wxid'] = ''
+
+                    # 处理昵称字段
+                    if 'DisplayName' in member and member['DisplayName']:
+                        processed_member['display_name'] = member['DisplayName']
+                    elif 'display_name' in member:
+                        processed_member['display_name'] = member['display_name']
+                    else:
+                        processed_member['display_name'] = ''
+
+                    if 'NickName' in member and member['NickName']:
+                        processed_member['nickname'] = member['NickName']
+                    elif 'nickname' in member:
+                        processed_member['nickname'] = member['nickname']
+                    else:
+                        processed_member['nickname'] = processed_member['wxid']
+
+                    # 处理头像字段
+                    if 'BigHeadImgUrl' in member and member['BigHeadImgUrl']:
+                        processed_member['avatar'] = member['BigHeadImgUrl']
+                    elif 'SmallHeadImgUrl' in member and member['SmallHeadImgUrl']:
+                        processed_member['avatar'] = member['SmallHeadImgUrl']
+                    elif 'HeadImgUrl' in member and member['HeadImgUrl']:
+                        processed_member['avatar'] = member['HeadImgUrl']
+                    elif 'avatar' in member:
+                        processed_member['avatar'] = member['avatar']
+                    else:
+                        processed_member['avatar'] = '/static/img/default-avatar.png'
+
+                    # 处理邀请人字段
+                    if 'InviterUserName' in member and member['InviterUserName']:
+                        processed_member['inviter_wxid'] = member['InviterUserName']
+                    elif 'inviter_wxid' in member:
+                        processed_member['inviter_wxid'] = member['inviter_wxid']
+                    else:
+                        processed_member['inviter_wxid'] = ''
+
+                    # 保留原始数据以便调试
+                    processed_member['raw_data'] = member
+
+                    processed_members.append(processed_member)
+
+                # 尝试将群成员保存到数据库
+                try:
+                    from database.group_members_db import save_group_members_to_db
+                    save_result = save_group_members_to_db(wxid, members)
+                    if save_result:
+                        logger.info(f"成功将群 {wxid} 的 {len(members)} 个成员保存到数据库")
+                    else:
+                        logger.warning(f"将群 {wxid} 的成员保存到数据库失败")
+                except Exception as e:
+                    logger.error(f"将群成员保存到数据库时出错: {str(e)}")
+
+                # 返回处理后的成员列表
+                return JSONResponse(
+                    content={
+                        "success": True,
+                        "data": processed_members
+                    }
+                )
+            except Exception as e:
+                logger.error(f"获取群成员列表时出错: {e}")
+                return JSONResponse(
+                    content={"success": False, "error": f"获取群成员列表失败: {str(e)}"}
+                )
+
+        except Exception as e:
+            logger.error(f"处理获取群成员请求时出错: {str(e)}")
+            return JSONResponse(
+                content={"success": False, "error": f"服务器错误: {str(e)}"}
+            )
+
 
     # 添加获取群公告的API端点
     @app.post("/api/group/announcement", response_class=JSONResponse)

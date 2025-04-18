@@ -85,6 +85,126 @@ class XYBot:
         """
         return self.wxid is not None
 
+    async def get_chatroom_member_list(self, group_wxid: str):
+        """获取群成员列表
+
+        Args:
+            group_wxid: 群聊的wxid
+
+        Returns:
+            list: 群成员列表
+        """
+        if not group_wxid.endswith("@chatroom"):
+            logger.error(f"无效的群ID: {group_wxid}，只有群聊才能获取成员列表")
+            return []
+
+        try:
+            logger.info(f"开始获取群 {group_wxid} 的成员列表")
+
+            # 直接调用微信API获取群成员列表
+            try:
+                import aiohttp
+                import json
+
+                # 获取微信API的基本配置
+                api_base = "http://127.0.0.1:9011"
+                if hasattr(self.bot, 'ip') and hasattr(self.bot, 'port'):
+                    api_base = f"http://{self.bot.ip}:{self.bot.port}"
+
+                # 确定API路径前缀
+                api_prefix = "/api"
+                if hasattr(self.bot, 'api_prefix'):
+                    api_prefix = self.bot.api_prefix
+                elif hasattr(self.bot, '_api_prefix'):
+                    api_prefix = self.bot._api_prefix
+
+                # 如果是849协议，使用/VXAPI前缀
+                if api_prefix == "" and hasattr(self.bot, 'ip') and self.bot.ip == "127.0.0.1" and self.bot.port == 9011:
+                    api_prefix = "/VXAPI"
+
+                # 获取当前登录的wxid
+                wxid = ""
+                if hasattr(self.bot, 'wxid'):
+                    wxid = self.bot.wxid
+
+                logger.info(f"使用API路径: {api_base}{api_prefix}/Group/GetChatRoomMemberDetail")
+
+                # 直接调用API获取群成员
+                async with aiohttp.ClientSession() as session:
+                    json_param = {"QID": group_wxid, "Wxid": wxid}
+                    logger.info(f"发送请求参数: {json.dumps(json_param)}")
+
+                    response = await session.post(
+                        f'{api_base}{api_prefix}/Group/GetChatRoomMemberDetail',
+                        json=json_param,
+                        headers={"Content-Type": "application/json"}
+                    )
+
+                    # 检查响应状态
+                    if response.status != 200:
+                        logger.error(f"获取群成员列表失败: HTTP状态码 {response.status}")
+                        return []
+
+                    # 解析响应数据
+                    try:
+                        json_resp = await response.json()
+                        logger.info(f"收到API响应: {json.dumps(json_resp)[:200]}...")
+
+                        if json_resp.get("Success"):
+                            # 处理成功响应
+                            members_data = []
+
+                            # 根据实际响应结构提取成员列表
+                            if json_resp.get("Data") and json_resp["Data"].get("NewChatroomData") and json_resp["Data"]["NewChatroomData"].get("ChatRoomMember"):
+                                members_data = json_resp["Data"]["NewChatroomData"]["ChatRoomMember"]
+                                logger.info(f"从 NewChatroomData.ChatRoomMember 获取到 {len(members_data)} 个成员")
+                            elif json_resp.get("Data") and json_resp["Data"].get("ChatRoomMember"):
+                                members_data = json_resp["Data"]["ChatRoomMember"]
+                                logger.info(f"从 Data.ChatRoomMember 获取到 {len(members_data)} 个成员")
+                            elif json_resp.get("Data") and isinstance(json_resp["Data"], list):
+                                members_data = json_resp["Data"]
+                                logger.info(f"从 Data 数组获取到 {len(members_data)} 个成员")
+
+                            logger.info(f"成功获取群 {group_wxid} 的成员列表，共 {len(members_data)} 个成员")
+
+                            # 处理成员信息，确保每个成员都有基本字段
+                            members = []
+                            for member in members_data:
+                                # 确保每个成员都有wxid字段
+                                if not member.get('wxid') and member.get('Wxid'):
+                                    member['wxid'] = member['Wxid']
+
+                                # 确保每个成员都有nickname字段
+                                if not member.get('nickname'):
+                                    if member.get('NickName'):
+                                        member['nickname'] = member['NickName']
+                                    else:
+                                        member['nickname'] = member.get('wxid', 'Unknown')
+
+                                # 处理头像字段
+                                if not member.get('avatar'):
+                                    if member.get('BigHeadImgUrl'):
+                                        member['avatar'] = member['BigHeadImgUrl']
+                                    elif member.get('SmallHeadImgUrl'):
+                                        member['avatar'] = member['SmallHeadImgUrl']
+
+                                members.append(member)
+
+                            return members
+                        else:
+                            error_msg = json_resp.get("Message") or json_resp.get("message") or "未知错误"
+                            logger.warning(f"获取群 {group_wxid} 成员列表失败: {error_msg}")
+                            return []
+                    except Exception as e:
+                        logger.error(f"解析群成员响应数据失败: {str(e)}")
+                        return []
+            except Exception as e:
+                logger.error(f"调用API获取群 {group_wxid} 成员列表失败: {str(e)}")
+                return []
+        except Exception as e:
+            logger.error(f"获取群成员列表时发生异常: {str(e)}")
+            return []
+
     async def update_contact_info(self, wxid: str):
         """更新联系人信息
 
