@@ -229,7 +229,38 @@ class MessageMixin(WechatAPIClientBase):
             media_info = MediaInfo.parse(video)
         else:
             raise ValueError("video should be str, bytes, or path")
-        duration = media_info.tracks[0].duration
+        raw_duration = media_info.tracks[0].duration
+
+        # 如果外部提供了时长，则优先使用外部时长
+        # MediaInfo返回的单位通常是毫秒，确保转换为整数秒
+        if raw_duration > 1000:  # 如果值很大，可能是毫秒
+            duration = int(raw_duration / 1000)
+        else:
+            duration = int(raw_duration)
+        video_duration = duration
+
+        # 只有当外部未提供时长时，才尝试从视频文件提取
+        if video_duration is None:
+            try:
+                # 检查时长单位和值
+                raw_duration = media_info.tracks[0].duration
+                if raw_duration is None:
+                    # 如果无法获取时长，使用默认值
+                    video_duration = 5  # 默认5秒
+                    logger.warning("无法获取视频时长，使用默认值5秒")
+                else:
+                    # MediaInfo返回的单位通常是毫秒，确保转换为整数秒
+                    if raw_duration > 1000:  # 如果值很大，可能是毫秒
+                        video_duration = int(raw_duration / 1000)
+                    else:
+                        video_duration = int(raw_duration)
+                    logger.debug(f"视频原始时长: {raw_duration}, 转换后: {video_duration}秒")
+            except Exception as e:
+                # 异常处理，使用默认值
+                video_duration = 5
+                logger.warning(f"处理视频时长时出错: {e}, 使用默认值5秒")
+        else:
+            logger.info(f"使用外部提供的视频时长: {video_duration}秒")
 
         # get image base64
         if isinstance(image, str):
@@ -247,7 +278,7 @@ class MessageMixin(WechatAPIClientBase):
         logger.info("开始发送视频: 对方wxid:{} 视频base64略 图片base64略 预计耗时:{}秒", wxid, predict_time)
 
         async with aiohttp.ClientSession() as session:
-            json_param = {"Wxid": self.wxid, "ToWxid": wxid, "Base64": vid_base64, "ImageBase64": image_base64,
+            json_param = {"Wxid": self.wxid, "ToWxid": wxid, "Base64": "data:video/mp4;base64,"+ vid_base64, "ImageBase64": "data:image/jpeg;base64,"+image_base64,
                           "PlayLength": duration}
             async with session.post(f'http://{self.ip}:{self.port}/api/Msg/SendVideo', json=json_param) as resp:
                 json_resp = await resp.json()

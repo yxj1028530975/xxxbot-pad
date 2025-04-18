@@ -5,7 +5,7 @@ from asyncio import Future
 from asyncio import Queue, sleep
 from io import BytesIO
 from pathlib import Path
-from typing import Union
+from typing import Union, Optional
 
 import aiohttp
 import pysilk
@@ -193,23 +193,24 @@ class MessageMixin(WechatAPIClientBase):
                 self.error_handler(json_resp)
 
     async def send_video_message(self, wxid: str, video: Union[str, bytes, os.PathLike],
-                                 image: [str, bytes, os.PathLike] = None):
+                                 image: Union[str, bytes, os.PathLike] = None, duration: Optional[int] = None):
         """发送视频消息。不推荐使用，上传速度很慢300KB/s。如要使用，可压缩视频，或者发送链接卡片而不是视频。
 
-                Args:
-                    wxid (str): 接收人wxid
-                    video (str, bytes, os.PathLike): 视频 接受base64字符串，字节，文件路径
-                    image (str, bytes, os.PathLike): 视频封面图片 接受base64字符串，字节，文件路径
+        Args:
+            wxid (str): 接收人wxid
+            video (str, bytes, os.PathLike): 视频 接受base64字符串，字节，文件路径
+            image (str, bytes, os.PathLike): 视频封面图片 接受base64字符串，字节，文件路径
+            duration (Optional[int]): 视频时长，单位为秒。若不提供，将从视频文件中提取
 
-                Returns:
-                    tuple[int, int]: 返回(ClientMsgid, NewMsgId)
+        Returns:
+            tuple[int, int]: 返回(ClientMsgid, NewMsgId)
 
-                Raises:
-                    UserLoggedOut: 未登录时调用
-                    BanProtection: 登录新设备后4小时内操作
-                    ValueError: 视频或图片参数都为空或都不为空时
-                    根据error_handler处理错误
-                """
+        Raises:
+            UserLoggedOut: 未登录时调用
+            BanProtection: 登录新设备后4小时内操作
+            ValueError: 视频或图片参数都为空或都不为空时
+            根据error_handler处理错误
+        """
         if not image:
             image = Path(os.path.join(Path(__file__).resolve().parent, "fallback.png"))
         # get video base64 and duration
@@ -229,7 +230,38 @@ class MessageMixin(WechatAPIClientBase):
             media_info = MediaInfo.parse(video)
         else:
             raise ValueError("video should be str, bytes, or path")
-        duration = media_info.tracks[0].duration
+        raw_duration = media_info.tracks[0].duration
+
+        # 如果外部提供了时长，则优先使用外部时长
+        # MediaInfo返回的单位通常是毫秒，确保转换为整数秒
+        if raw_duration > 1000:  # 如果值很大，可能是毫秒
+            duration = int(raw_duration / 1000)
+        else:
+            duration = int(raw_duration)
+        video_duration = duration
+
+        # 只有当外部未提供时长时，才尝试从视频文件提取
+        if video_duration is None:
+            try:
+                # 检查时长单位和值
+                raw_duration = media_info.tracks[0].duration
+                if raw_duration is None:
+                    # 如果无法获取时长，使用默认值
+                    video_duration = 5  # 默认5秒
+                    logger.warning("无法获取视频时长，使用默认值5秒")
+                else:
+                    # MediaInfo返回的单位通常是毫秒，确保转换为整数秒
+                    if raw_duration > 1000:  # 如果值很大，可能是毫秒
+                        video_duration = int(raw_duration / 1000)
+                    else:
+                        video_duration = int(raw_duration)
+                    logger.debug(f"视频原始时长: {raw_duration}, 转换后: {video_duration}秒")
+            except Exception as e:
+                # 异常处理，使用默认值
+                video_duration = 5
+                logger.warning(f"处理视频时长时出错: {e}, 使用默认值5秒")
+        else:
+            logger.info(f"使用外部提供的视频时长: {video_duration}秒")
 
         # get image base64
         if isinstance(image, str):
@@ -244,18 +276,18 @@ class MessageMixin(WechatAPIClientBase):
 
         # 打印预估时间，300KB/s
         predict_time = int(file_len / 1024 / 300)
-        logger.info("开始发送视频: 对方wxid:{} 视频base64略 图片base64略 预计耗时:{}秒", wxid, predict_time)
+        logger.info("开始发送视频: 对方wxid:{} 视频base64略 图片base64略 预计耗时:{}秒 视频时长:{}秒", wxid, predict_time, video_duration)
 
         async with aiohttp.ClientSession() as session:
-            json_param = {"Wxid": self.wxid, "ToWxid": wxid, "Base64": vid_base64, "ImageBase64": image_base64,
-                          "PlayLength": duration}
+            json_param = {"Wxid": self.wxid, "ToWxid": wxid, "Base64": "data:video/mp4;base64,"+ vid_base64, "ImageBase64": "data:image/jpeg;base64,"+image_base64,
+                          "PlayLength": video_duration}
             async with session.post(f'http://{self.ip}:{self.port}/VXAPI/Msg/SendVideo', json=json_param) as resp:
                 json_resp = await resp.json()
 
         if json_resp.get("Success"):
             json_param.pop('Base64')
             json_param.pop('ImageBase64')
-            logger.info("发送视频成功: 对方wxid:{} 时长:{} 视频base64略 图片base64略", wxid, duration)
+            logger.info("发送视频成功: 对方wxid:{} 时长:{}秒 视频base64略 图片base64略", wxid, video_duration)
             data = json_resp.get("Data")
             return data.get("clientMsgId"), data.get("newMsgId")
         else:
