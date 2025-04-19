@@ -293,7 +293,7 @@ class Dify(PluginBase):
     author = "老夏的金库"
     version = "1.3.2"  # 更新版本号
     is_ai_platform = True  # 标记为 AI 平台插件
-    
+
     def __init__(self):
         super().__init__()
         self.chat_manager = ChatRoomManager()
@@ -319,8 +319,7 @@ class Dify(PluginBase):
             self.http_proxy = plugin_config["http-proxy"]
             self.voice_reply_all = plugin_config["voice_reply_all"]
             self.robot_names = plugin_config.get("robot-names", [])
-            self.audio_to_text_url = plugin_config.get("audio-to-text-url", "")
-            self.text_to_audio_url = plugin_config.get("text-to-audio-url", "")
+            # 移除单独的 URL 配置，改为动态构建
             self.remember_user_model = plugin_config.get("remember_user_model", True)
             self.chatroom_enable = plugin_config.get("chatroom_enable", True)  # 添加聊天室功能开关
 
@@ -345,6 +344,9 @@ class Dify(PluginBase):
         self.db = XYBotDB()
         self.image_cache = {}
         self.image_cache_timeout = 60
+        # 添加文件缓存
+        self.file_cache = {}
+        self.file_cache_timeout = 300  # 5分钟文件缓存超时
         # 添加文件存储目录配置
         self.files_dir = "files"
         # 创建文件存储目录
@@ -599,6 +601,7 @@ class Dify(PluginBase):
                     logger.debug("发现最近的图片，准备上传到 Dify")
                     file_id = await self.upload_file_to_dify(
                         image_content,
+                        f"image_{int(time.time())}.jpg",  # 生成一个有效的文件名
                         "image/jpeg",  # 根据实际图片类型调整
                         message["FromWxid"],
                         model_config=model  # 传递正确的模型配置
@@ -1198,12 +1201,37 @@ class Dify(PluginBase):
 
         # 处理文件上传
         formatted_files = []
-        for file_id in files:
-            formatted_files.append({
-                "type": "image",  # 修改为image类型
-                "transfer_method": "local_file",
-                "upload_file_id": file_id
-            })
+        for file_info in files:
+            if isinstance(file_info, dict) and "id" in file_info and "type" in file_info:
+                # 新格式，已包含类型信息
+                formatted_files.append({
+                    "type": file_info["type"],
+                    "transfer_method": "local_file",
+                    "upload_file_id": file_info["id"]
+                })
+            else:
+                # 兼容旧格式，假设是图片ID
+                formatted_files.append({
+                    "type": "image",
+                    "transfer_method": "local_file",
+                    "upload_file_id": file_info
+                })
+
+        # 检查是否有缓存的文件
+        cached_file = await self.get_cached_file(message["SenderWxid"])
+        if cached_file:
+            file_content, file_name, mime_type = cached_file
+            logger.info(f"发现缓存文件，准备上传到 Dify: {file_name}, 大小: {len(file_content)} 字节")
+
+            # 上传文件到 Dify
+            file_info = await self.upload_file_to_dify(file_content, file_name, mime_type, message["SenderWxid"], model_config=model)
+            if file_info:
+                logger.info(f"成功上传缓存文件到 Dify，文件ID: {file_info['id']}, 类型: {file_info['type']}")
+                formatted_files.append({
+                    "type": file_info["type"],
+                    "transfer_method": "local_file",
+                    "upload_file_id": file_info["id"]
+                })
 
         try:
             logger.debug(f"开始调用 Dify API - 用户消息: {processed_query}")
@@ -1346,60 +1374,133 @@ class Dify(PluginBase):
                 content_type = resp.headers.get('Content-Type', '')
                 return await resp.read(), content_type
 
-    async def upload_file_to_dify(self, file_content: bytes, mime_type: str, user: str, model_config=None) -> Optional[str]:
+    async def upload_file_to_dify(self, file_content: bytes, file_name: str, mime_type: str, user: str, model_config=None) -> Optional[dict]:
         """
-        上传文件到Dify并返回文件ID
+        上传文件到Dify并返回文件信息
+        返回格式: {"id": "uuid", "type": "image|document|audio|video"}
         """
-        logger.info(f"开始上传文件到Dify, 用户: {user}, 文件大小: {len(file_content)} 字节, MIME类型: {mime_type}")
+        logger.info(f"开始上传文件到Dify, 用户: {user}, 文件名: {file_name}, 文件大小: {len(file_content)} 字节, MIME类型: {mime_type}")
 
         if not file_content or len(file_content) == 0:
             logger.error("文件内容为空，无法上传")
             return None
 
         try:
-            # 验证并处理图片数据
-            try:
-                # 尝试打开图片数据
-                # 特别处理截断的图片文件
-                from PIL import ImageFile
-                ImageFile.LOAD_TRUNCATED_IMAGES = True  # 允许加载截断的图片
+            # 判断文件类型
+            file_extension = os.path.splitext(file_name)[1].lower().lstrip('.')
+            if not file_extension:
+                # 如果文件名没有扩展名，尝试从 MIME 类型推断
+                file_extension = mime_type.split('/')[-1].lower()
 
-                image = Image.open(io.BytesIO(file_content))
-                logger.debug(f"原始图片格式: {image.format}, 大小: {image.size}, 模式: {image.mode}")
+            # 确定文件类型
+            # 根据 Dify 文档，支持的文件类型如下：
+            # document: 'TXT', 'MD', 'MARKDOWN', 'PDF', 'HTML', 'XLSX', 'XLS', 'DOCX', 'CSV', 'EML', 'MSG', 'PPTX', 'PPT', 'XML', 'EPUB'
+            # image: 'JPG', 'JPEG', 'PNG', 'GIF', 'WEBP', 'SVG'
+            # audio: 'MP3', 'M4A', 'WAV', 'WEBM', 'AMR'
+            # video: 'MP4', 'MOV', 'MPEG', 'MPGA'
+            # custom: 其他文件类型
 
-                # 转换为RGB模式(去除alpha通道)
-                if image.mode in ('RGBA', 'LA'):
-                    logger.debug(f"图片包含alpha通道，转换为RGB模式")
-                    background = Image.new('RGB', image.size, (255, 255, 255))
-                    background.paste(image, mask=image.split()[-1])
-                    image = background
+            # 文档类型列表 - 根据 Dify 文档
+            document_extensions = ['txt', 'md', 'markdown', 'pdf', 'html', 'xlsx', 'xls', 'docx', 'csv', 'eml', 'msg', 'pptx', 'ppt', 'xml', 'epub']
+            # 根据文档，Dify 确实支持 'ppt' 格式
+            # 图片类型列表
+            image_extensions = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg']
+            # 音频类型列表
+            audio_extensions = ['mp3', 'm4a', 'wav', 'webm', 'amr']
+            # 视频类型列表
+            video_extensions = ['mp4', 'mov', 'mpeg', 'mpga']
 
-                # 保存为JPEG
-                output = io.BytesIO()
-                image.save(output, format='JPEG', quality=95)
-                file_content = output.getvalue()
-                mime_type = 'image/jpeg'
-                logger.info(f"图片格式转换成功，新大小: {len(file_content)} 字节")
-            except Exception as e:
-                logger.error(f"图片格式转换失败: {e}")
-                logger.error(traceback.format_exc())
-                # 尝试使用原始数据上传
-                logger.warning("将使用原始图片数据上传")
-                # 确保我们有正确的MIME类型
+            # 默认使用 custom 类型
+            file_type = "custom"
+
+            # 根据文件扩展名判断类型
+            if file_extension in document_extensions or mime_type.startswith('application/') or mime_type.startswith('text/'):
+                file_type = "document"
+                # 特殊处理 PPT 文件
+                if file_extension == 'ppt' or file_name.lower().endswith('.ppt') or mime_type == 'application/vnd.ms-powerpoint':
+                    logger.info(f"检测到 PPT 文件，使用 document 类型上传")
+            elif file_extension in image_extensions or mime_type.startswith('image/'):
+                file_type = "image"
+                # 处理图片文件
                 try:
-                    import filetype
-                    kind = filetype.guess(file_content)
-                    if kind is not None:
-                        mime_type = kind.mime
-                        logger.debug(f"检测到文件类型: {mime_type}")
-                    else:
-                        # 如果无法检测，尝试使用默认的图片MIME类型
-                        mime_type = 'image/jpeg'  # 默认使用JPEG
-                        logger.warning(f"无法检测文件类型，使用默认类型: {mime_type}")
-                except Exception as mime_error:
-                    logger.error(f"检测文件类型失败: {mime_error}")
-                    mime_type = 'image/jpeg'  # 默认使用JPEG
-                logger.warning("将尝试使用原始数据上传")
+                    # 尝试打开图片数据
+                    # 特别处理截断的图片文件
+                    from PIL import ImageFile
+                    ImageFile.LOAD_TRUNCATED_IMAGES = True  # 允许加载截断的图片
+
+                    # 使用BytesIO确保完整读取图片数据
+                    image_io = io.BytesIO(file_content)
+                    image = Image.open(image_io)
+                    logger.debug(f"原始图片格式: {image.format}, 大小: {image.size}, 模式: {image.mode}")
+
+                    # 转换为RGB模式(去除alpha通道)
+                    if image.mode in ('RGBA', 'LA'):
+                        logger.debug(f"图片包含alpha通道，转换为RGB模式")
+                        background = Image.new('RGB', image.size, (255, 255, 255))
+                        background.paste(image, mask=image.split()[-1])
+                        image = background
+
+                    # 检查图片大小，如果太大则调整大小
+                    max_dimension = 1600  # 最大尺寸限制
+                    max_file_size = 1024 * 1024 * 2  # 2MB大小限制
+
+                    # 调整图片尺寸
+                    width, height = image.size
+                    if width > max_dimension or height > max_dimension:
+                        # 计算缩放比例
+                        ratio = min(max_dimension / width, max_dimension / height)
+                        new_width = int(width * ratio)
+                        new_height = int(height * ratio)
+                        logger.info(f"图片尺寸过大，调整大小从 {width}x{height} 到 {new_width}x{new_height}")
+                        image = image.resize((new_width, new_height), Image.LANCZOS)
+
+                    # 保存为JPEG，尝试不同的质量级别以满足大小限制
+                    quality = 95
+                    output = io.BytesIO()
+                    image.save(output, format='JPEG', quality=quality, optimize=True)
+                    output.seek(0)
+                    resized_content = output.getvalue()
+
+                    # 如果文件仍然太大，逐步降低质量
+                    while len(resized_content) > max_file_size and quality > 50:
+                        quality -= 10
+                        output = io.BytesIO()
+                        image.save(output, format='JPEG', quality=quality, optimize=True)
+                        output.seek(0)
+                        resized_content = output.getvalue()
+                        logger.debug(f"降低图片质量到 {quality}，新大小: {len(resized_content)} 字节")
+
+                    file_content = resized_content
+                    mime_type = 'image/jpeg'
+                    file_extension = 'jpg'
+                    logger.info(f"图片处理成功，质量: {quality}，新大小: {len(file_content)} 字节")
+
+                    # 验证处理后的图片
+                    try:
+                        Image.open(io.BytesIO(file_content))
+                        logger.debug("处理后的图片验证成功")
+                    except Exception as e:
+                        logger.error(f"处理后的图片验证失败: {e}")
+                        # 如果处理后的图片无效，尝试使用原始图片数据
+                        file_content = image_io.getvalue()
+                        logger.warning(f"使用原始图片数据上传，大小: {len(file_content)} 字节")
+                except Exception as e:
+                    logger.error(f"图片格式转换失败: {e}")
+                    logger.error(traceback.format_exc())
+                    # 尝试使用原始数据上传，但先验证原始数据是否为有效图片
+                    try:
+                        Image.open(io.BytesIO(file_content))
+                        logger.warning("原始图片数据有效，将直接使用原始数据上传")
+                    except Exception as img_error:
+                        logger.error(f"原始图片数据无效: {img_error}")
+                        # 如果原始数据也无效，返回None
+                        return None
+            elif file_extension in audio_extensions or mime_type.startswith('audio/'):
+                file_type = "audio"
+            elif file_extension in video_extensions or mime_type.startswith('video/'):
+                file_type = "video"
+
+            logger.info(f"文件类型判断: {file_type}, 扩展名: {file_extension}")
 
             # 使用传入的model_config，如果没有则使用默认模型
             model = model_config or self.current_model
@@ -1419,31 +1520,62 @@ class Dify(PluginBase):
                 logger.info("文件上传目前不支持API代理，使用直接连接")
                 use_api_proxy = False
 
+            # 处理文件名，确保有正确的扩展名
+            if file_type == "image" and not file_name.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg')):
+                processed_file_name = f"image_{int(time.time())}.jpg"
+                logger.info(f"更新图片文件名为: {processed_file_name}")
+            else:
+                # 处理文件名，避免重复的扩展名
+                processed_file_name = file_name
+                file_extension = os.path.splitext(file_name)[1].lower().lstrip('.')
+                base_name = os.path.splitext(file_name)[0]
+
+                # 检查基本名称是否已经包含扩展名
+                if base_name.lower().endswith(f".{file_extension}"):
+                    # 如果基本名称已经包含扩展名，则去除重复的扩展名
+                    processed_file_name = f"{base_name}.{file_extension}"
+                    logger.info(f"去除重复的文件扩展名，处理后的文件名: {processed_file_name}")
+
+            # 确保MIME类型与文件类型匹配
+            if file_type == "image" and not mime_type.startswith('image/'):
+                mime_type = 'image/jpeg'
+                logger.info(f"更新MIME类型为: {mime_type}")
+
             # 使用直接连接上传文件
             headers = {"Authorization": f"Bearer {model.api_key}"}
             formdata = aiohttp.FormData()
-            filename = f"file_{int(time.time())}.{mime_type.split('/')[-1]}"
+            # 使用处理后的文件名
             formdata.add_field("file", file_content,
-                            filename=filename,
+                            filename=processed_file_name,
                             content_type=mime_type)
             formdata.add_field("user", user)
 
             url = f"{model.base_url}/files/upload"
             logger.debug(f"开始请求Dify文件上传API: {url}")
 
+            # 设置较长的超时时间
+            timeout = aiohttp.ClientTimeout(total=60)  # 60秒超时
+
             try:
-                async with aiohttp.ClientSession(proxy=self.http_proxy) as session:
+                async with aiohttp.ClientSession(proxy=self.http_proxy, timeout=timeout) as session:
                     async with session.post(url, headers=headers, data=formdata) as resp:
                         if resp.status in (200, 201):
                             result = await resp.json()
                             file_id = result.get("id")
                             if file_id:
-                                logger.info(f"文件上传成功，文件ID: {file_id}")
+                                logger.info(f"文件上传成功，文件ID: {file_id}, 类型: {file_type}")
                                 # 上传成功后删除缓存
-                                if user in self.image_cache:
+                                if user in self.file_cache:
+                                    del self.file_cache[user]
+                                    logger.debug(f"已清除用户 {user} 的文件缓存")
+                                # 清除图片缓存
+                                if file_type == "image" and user in self.image_cache:
                                     del self.image_cache[user]
                                     logger.debug(f"已清除用户 {user} 的图片缓存")
-                                return file_id
+                                return {
+                                    "id": file_id,
+                                    "type": file_type
+                                }
                             else:
                                 logger.error(f"文件上传成功但未返回文件ID: {result}")
                         else:
@@ -1530,18 +1662,110 @@ class Dify(PluginBase):
         text = re.sub(pattern, '', text)
 
     async def dify_handle_image(self, bot: WechatAPIClient, message: dict, image: Union[str, bytes], model_config=None):
-        if isinstance(image, str) and image.startswith("http"):
-            try:
-                async with aiohttp.ClientSession(proxy=self.http_proxy) as session:
-                    async with session.get(image) as resp:
-                        image = bot.byte_to_base64(await resp.read())
-            except Exception as e:
-                logger.error(f"下载图片 {image} 失败: {e}")
-                await bot.send_text_message(message["FromWxid"], f"下载图片 {image} 失败")
+        try:
+            image_content = None
+
+            if isinstance(image, str) and image.startswith("http"):
+                try:
+                    logger.info(f"从URL下载图片: {image}")
+                    async with aiohttp.ClientSession(proxy=self.http_proxy) as session:
+                        async with session.get(image) as resp:
+                            if resp.status == 200:
+                                image_content = await resp.read()
+                                logger.info(f"成功从URL下载图片，大小: {len(image_content)} 字节")
+
+                                # 上传到 Dify
+                                file_info = await self.upload_file_to_dify(
+                                    image_content,
+                                    f"image_{int(time.time())}.jpg",  # 生成一个有效的文件名
+                                    "image/jpeg",  # 根据实际图片类型调整
+                                    message["FromWxid"],
+                                    model_config=model_config  # 传递模型配置
+                                )
+                                if file_info:
+                                    logger.info(f"图片上传成功，文件ID: {file_info['id']}, 类型: {file_info['type']}")
+                            else:
+                                logger.error(f"下载图片失败: HTTP {resp.status}")
+                                await bot.send_text_message(message["FromWxid"], f"下载图片失败: HTTP {resp.status}")
+                                return
+                except Exception as e:
+                    logger.error(f"下载图片 {image} 失败: {e}")
+                    logger.error(traceback.format_exc())
+                    await bot.send_text_message(message["FromWxid"], f"下载图片 {image} 失败: {str(e)}")
+                    return
+            elif isinstance(image, bytes):
+                logger.info(f"处理二进制图片数据，大小: {len(image)} 字节")
+                image_content = image
+
+                # 上传到 Dify
+                file_info = await self.upload_file_to_dify(
+                    image_content,
+                    f"image_{int(time.time())}.jpg",  # 生成一个有效的文件名
+                    "image/jpeg",  # 根据实际图片类型调整
+                    message["FromWxid"],
+                    model_config=model_config  # 传递模型配置
+                )
+                if file_info:
+                    logger.info(f"图片上传成功，文件ID: {file_info['id']}, 类型: {file_info['type']}")
+            else:
+                logger.error(f"不支持的图片类型: {type(image)}")
+                await bot.send_text_message(message["FromWxid"], f"不支持的图片类型: {type(image)}")
                 return
-        elif isinstance(image, bytes):
-            image = bot.byte_to_base64(image)
-        await bot.send_image_message(message["FromWxid"], image)
+
+            # 确保我们有图片内容
+            if not image_content:
+                logger.error("图片内容为空，无法发送")
+                await bot.send_text_message(message["FromWxid"], "图片内容为空，无法发送")
+                return
+
+            # 验证图片数据
+            try:
+                # 允许加载截断的图片
+                from PIL import ImageFile
+                ImageFile.LOAD_TRUNCATED_IMAGES = True
+
+                # 验证图片数据
+                img = Image.open(io.BytesIO(image_content))
+                logger.info(f"图片验证成功，格式: {img.format}, 大小: {img.size}, 模式: {img.mode}")
+
+                # 检查图片大小，如果太大则调整大小
+                width, height = img.size
+                max_dimension = 1600  # 最大尺寸限制
+
+                if width > max_dimension or height > max_dimension:
+                    # 计算缩放比例
+                    ratio = min(max_dimension / width, max_dimension / height)
+                    new_width = int(width * ratio)
+                    new_height = int(height * ratio)
+                    logger.info(f"图片尺寸过大，调整大小从 {width}x{height} 到 {new_width}x{new_height}")
+                    img = img.resize((new_width, new_height), Image.LANCZOS)
+
+                    # 转换为RGB模式(去除alpha通道)
+                    if img.mode in ('RGBA', 'LA'):
+                        logger.debug(f"图片包含alpha通道，转换为RGB模式")
+                        background = Image.new('RGB', img.size, (255, 255, 255))
+                        background.paste(img, mask=img.split()[-1])
+                        img = background
+
+                    # 保存为JPEG
+                    output = io.BytesIO()
+                    img.save(output, format='JPEG', quality=95, optimize=True)
+                    output.seek(0)
+                    image_content = output.getvalue()
+                    logger.info(f"图片处理成功，新大小: {len(image_content)} 字节")
+            except Exception as e:
+                logger.error(f"图片验证或处理失败: {e}")
+                logger.error(traceback.format_exc())
+                # 继续使用原始图片数据
+
+            # 直接发送图片数据，不进行base64转换
+            logger.info(f"发送图片给用户，大小: {len(image_content)} 字节")
+            await bot.send_image_message(message["FromWxid"], image_content)
+            logger.info("图片发送成功")
+        except Exception as e:
+            logger.error(f"处理图片失败: {e}")
+            logger.error(traceback.format_exc())
+            await bot.send_text_message(message["FromWxid"], f"处理图片失败: {str(e)}")
 
     @staticmethod
     async def dify_handle_error(bot: WechatAPIClient, message: dict, task_id: str, message_id: str, status: str,
@@ -1616,25 +1840,29 @@ class Dify(PluginBase):
                 logger.error(f"ffmpeg 执行失败: {process.stderr}")
                 return ""
 
-            if self.audio_to_text_url:
-                headers = {"Authorization": f"Bearer {self.current_model.api_key}"}
-                formdata = aiohttp.FormData()
-                with open(mp3_file, "rb") as f:
-                    mp3_data = f.read()
-                formdata.add_field("file", mp3_data, filename="audio.mp3", content_type="audio/mp3")
-                formdata.add_field("user", message["SenderWxid"])
-                async with aiohttp.ClientSession(proxy=self.http_proxy) as session:
-                    async with session.post(self.audio_to_text_url, headers=headers, data=formdata) as resp:
-                        if resp.status == 200:
-                            result = await resp.json()
-                            text = result.get("text", "")
-                            if "failed" in text.lower() or "code" in text.lower():
-                                logger.error(f"Dify API 返回错误: {text}")
-                            else:
-                                logger.info(f"语音转文字结果 (Dify API): {text}")
-                                return text
+            # 使用当前模型的 base-url 构建音频转文本 URL
+            model = self.get_user_model(message["SenderWxid"])
+            audio_to_text_url = f"{model.base_url}/audio-to-text"
+            logger.debug(f"使用音频转文本 URL: {audio_to_text_url}")
+
+            headers = {"Authorization": f"Bearer {model.api_key}"}
+            formdata = aiohttp.FormData()
+            with open(mp3_file, "rb") as f:
+                mp3_data = f.read()
+            formdata.add_field("file", mp3_data, filename="audio.mp3", content_type="audio/mp3")
+            formdata.add_field("user", message["SenderWxid"])
+            async with aiohttp.ClientSession(proxy=self.http_proxy) as session:
+                async with session.post(audio_to_text_url, headers=headers, data=formdata) as resp:
+                    if resp.status == 200:
+                        result = await resp.json()
+                        text = result.get("text", "")
+                        if "failed" in text.lower() or "code" in text.lower():
+                            logger.error(f"Dify API 返回错误: {text}")
                         else:
-                            logger.error(f"audio-to-text 接口调用失败: {resp.status} - {await resp.text()}")
+                            logger.info(f"语音转文字结果 (Dify API): {text}")
+                            return text
+                    else:
+                        logger.error(f"audio-to-text 接口调用失败: {resp.status} - {await resp.text()})")
 
             command = f"ffmpeg -y -i {mp3_file} {silk_file.replace('.silk', '.wav')}"
             process = subprocess.run(command, shell=True, check=True, capture_output=True, text=True)
@@ -1658,11 +1886,15 @@ class Dify(PluginBase):
 
     async def text_to_voice_message(self, bot: WechatAPIClient, message: dict, text: str):
         try:
-            url = self.text_to_audio_url if self.text_to_audio_url else f"{self.current_model.base_url}/text-to-audio"
-            headers = {"Authorization": f"Bearer {self.current_model.api_key}", "Content-Type": "application/json"}
+            # 使用当前模型的 base-url 构建文本转音频 URL
+            model = self.get_user_model(message["SenderWxid"])
+            text_to_audio_url = f"{model.base_url}/text-to-audio"
+            logger.debug(f"使用文本转音频 URL: {text_to_audio_url}")
+
+            headers = {"Authorization": f"Bearer {model.api_key}", "Content-Type": "application/json"}
             data = {"text": text, "user": message["SenderWxid"]}
             async with aiohttp.ClientSession(proxy=self.http_proxy) as session:
-                async with session.post(url, headers=headers, json=data) as resp:
+                async with session.post(text_to_audio_url, headers=headers, json=data) as resp:
                     if resp.status == 200:
                         audio = await resp.read()
                         await bot.send_voice_message(message["FromWxid"], voice=audio, format="mp3")
@@ -1774,18 +2006,46 @@ class Dify(PluginBase):
                                 # 从 XML 中提取图片大小
                                 img_length = int(length) if length and length.isdigit() else 0
 
-                                # 使用消息 ID 下载图片
+                                # 使用消息 ID 下载图片 - 实现分段下载
                                 logger.debug(f"尝试使用消息 ID {msg_id} 下载图片，图片大小: {img_length}")
-                                image_data = await bot.get_msg_image(msg_id, from_wxid, img_length)
 
-                                if image_data and len(image_data) > 0:
+                                # 创建一个字节数组来存储完整的图片数据
+                                full_image_data = bytearray()
+
+                                # 分段下载大图片
+                                chunk_size = 64 * 1024  # 64KB
+                                chunks = (img_length + chunk_size - 1) // chunk_size  # 向上取整
+
+                                logger.info(f"开始分段下载图片，总大小: {img_length} 字节，分 {chunks} 段下载")
+
+                                download_success = True
+                                for i in range(chunks):
+                                    try:
+                                        # 下载当前段
+                                        chunk_data = await bot.get_msg_image(msg_id, from_wxid, img_length, start_pos=i*chunk_size)
+                                        if chunk_data and len(chunk_data) > 0:
+                                            full_image_data.extend(chunk_data)
+                                            logger.debug(f"第 {i+1}/{chunks} 段下载成功，大小: {len(chunk_data)} 字节")
+                                        else:
+                                            logger.error(f"第 {i+1}/{chunks} 段下载失败，数据为空")
+                                            download_success = False
+                                            break
+                                    except Exception as e:
+                                        logger.error(f"下载第 {i+1}/{chunks} 段时出错: {e}")
+                                        download_success = False
+                                        break
+
+                                if download_success and len(full_image_data) > 0:
                                     # 验证图片数据
                                     try:
+                                        image_data = bytes(full_image_data)
                                         Image.open(io.BytesIO(image_data))
                                         image_content = image_data
-                                        logger.info(f"使用消息 ID下载图片成功，大小: {len(image_data)} 字节")
+                                        logger.info(f"使用消息 ID下载图片成功，总大小: {len(image_data)} 字节")
                                     except Exception as img_error:
                                         logger.error(f"下载的图片数据无效: {img_error}")
+                                else:
+                                    logger.error(f"图片分段下载失败，已下载: {len(full_image_data)}/{img_length} 字节")
                             except Exception as download_error:
                                 logger.error(f"使用消息 ID下载图片失败: {download_error}")
                                 logger.error(traceback.format_exc())
@@ -1862,6 +2122,70 @@ class Dify(PluginBase):
             logger.debug(f"未找到用户 {user_wxid} 的缓存图片")
         return None
 
+    async def get_cached_file(self, user_wxid: str) -> Optional[tuple[bytes, str, str]]:
+        """获取用户最近的文件，返回 (文件内容, 文件名, MIME类型)"""
+        logger.debug(f"尝试获取用户 {user_wxid} 的缓存文件")
+        if user_wxid in self.file_cache:
+            cache_data = self.file_cache[user_wxid]
+            current_time = time.time()
+            cache_age = current_time - cache_data["timestamp"]
+            logger.debug(f"找到缓存文件，年龄: {cache_age:.2f}秒, 超时时间: {self.file_cache_timeout}秒")
+
+            if cache_age <= self.file_cache_timeout:
+                try:
+                    # 确保我们有有效的二进制数据
+                    file_content = cache_data["content"]
+                    file_name = cache_data["name"]
+                    mime_type = cache_data["mime_type"]
+
+                    # 处理不同类型的文件内容
+                    if isinstance(file_content, bytearray):
+                        # 将 bytearray 转换为 bytes
+                        file_content = bytes(file_content)
+                        logger.info(f"将 bytearray 转换为 bytes，大小: {len(file_content)} 字节")
+                    elif isinstance(file_content, str):
+                        # 尝试将字符串解析为 base64
+                        try:
+                            file_content = base64.b64decode(file_content)
+                            logger.info(f"将 base64 字符串转换为 bytes，大小: {len(file_content)} 字节")
+                        except Exception as e:
+                            logger.error(f"Base64 解码失败: {e}")
+                            file_content = file_content.encode('utf-8')
+                            logger.info(f"将普通字符串转换为 bytes，大小: {len(file_content)} 字节")
+                    elif not isinstance(file_content, bytes):
+                        logger.error(f"缓存的文件内容不是支持的格式: {type(file_content)}")
+                        del self.file_cache[user_wxid]
+                        return None
+
+                    # 更新缓存中的文件内容
+                    self.file_cache[user_wxid]["content"] = file_content
+
+                    # 更新时间戳，避免过早超时
+                    self.file_cache[user_wxid]["timestamp"] = current_time
+                    logger.info(f"成功获取用户 {user_wxid} 的缓存文件: {file_name}, 大小: {len(file_content)} 字节")
+                    return (file_content, file_name, mime_type)
+                except Exception as e:
+                    logger.error(f"处理缓存文件失败: {e}")
+                    del self.file_cache[user_wxid]
+                    return None
+            else:
+                # 超时清除
+                logger.debug(f"缓存文件超时，已清除")
+                del self.file_cache[user_wxid]
+        else:
+            logger.debug(f"未找到用户 {user_wxid} 的缓存文件")
+        return None
+
+    def cache_file(self, user_wxid: str, file_content: bytes, file_name: str, mime_type: str) -> None:
+        """缓存用户文件"""
+        self.file_cache[user_wxid] = {
+            "content": file_content,
+            "name": file_name,
+            "mime_type": mime_type,
+            "timestamp": time.time()
+        }
+        logger.info(f"已缓存用户 {user_wxid} 的文件: {file_name}, 大小: {len(file_content)} 字节")
+
     async def download_and_send_file(self, bot: WechatAPIClient, message: dict, url: str):
         """下载并发送文件"""
         try:
@@ -1913,11 +2237,515 @@ class Dify(PluginBase):
             logger.error(f"下载或发送文件失败: {e}")
             await bot.send_text_message(message["FromWxid"], f"处理文件失败: {str(e)}")
 
+    @on_xml_message(priority=98)  # 使用高优先级确保先处理
+    async def handle_xml_file(self, bot: WechatAPIClient, message: dict):
+        """处理XML格式的文件消息"""
+        if not self.enable:
+            return True
+
+        try:
+            # 检查消息内容是否是XML格式
+            content = message.get("Content", "")
+            if not content or not isinstance(content, str) or not content.strip().startswith("<"):
+                logger.warning(f"Dify: 消息内容不是XML格式: {content[:100]}")
+                return True
+
+            # 如果是引用消息，检查是否有Quote字段
+            if message.get("Quote"):
+                logger.info("Dify: 检测到引用消息，使用普通文本处理")
+                return True
+
+            # 解析XML内容
+            root = ET.fromstring(message["Content"])
+            appmsg = root.find("appmsg")
+            if appmsg is None:
+                return True
+
+            type_element = appmsg.find("type")
+            if type_element is None:
+                return True
+
+            type_value = int(type_element.text)
+            logger.info(f"Dify: XML消息类型: {type_value}")
+
+            # 检测是否是文件消息（类型6）
+            if type_value == 6:
+                logger.info("Dify: 检测到文件消息")
+
+                # 提取文件信息
+                title = appmsg.find("title").text
+                appattach = appmsg.find("appattach")
+                attach_id = appattach.find("attachid").text
+                file_extend = appattach.find("fileext").text
+                total_len = int(appattach.find("totallen").text)
+
+                logger.info(f"Dify: 文件名: {title}")
+                logger.info(f"Dify: 文件扩展名: {file_extend}")
+                logger.info(f"Dify: 附件ID: {attach_id}")
+                logger.info(f"Dify: 文件大小: {total_len}")
+
+                # 发送通知
+                await bot.send_text_message(
+                    message["FromWxid"],
+                    f"Dify: 正在下载文件..."
+                )
+
+                # 使用 /Tools/DownloadFile API 下载文件
+                logger.info("Dify: 开始下载文件...")
+                # 分段下载大文件
+                # 每次下载 64KB
+                chunk_size = 64 * 1024  # 64KB
+                app_id = appmsg.get("appid", "")
+
+                # 创建一个字节数组来存储完整的文件数据
+                file_data = bytearray()
+
+                # 计算需要下载的分段数量
+                chunks = (total_len + chunk_size - 1) // chunk_size  # 向上取整
+
+                logger.info(f"Dify: 开始分段下载文件，总大小: {total_len} 字节，分 {chunks} 段下载")
+
+                # 尝试两个不同的API端点
+                urls = [
+                    f'http://127.0.0.1:9011/api/Tools/DownloadFile',
+                    f'http://127.0.0.1:9011/VXAPI/Tools/DownloadFile'
+                ]
+
+                download_success = False
+
+                for url in urls:
+                    if download_success:
+                        break
+
+                    file_data.clear()  # 清空之前的数据
+                    logger.info(f"Dify: 尝试使用 {url} 下载文件")
+
+                    # 分段下载
+                    for i in range(chunks):
+                        start_pos = i * chunk_size
+                        # 最后一段可能不足 chunk_size
+                        current_chunk_size = min(chunk_size, total_len - start_pos)
+
+                        logger.info(f"Dify: 下载第 {i+1}/{chunks} 段，起始位置: {start_pos}，大小: {current_chunk_size} 字节")
+
+                        async with aiohttp.ClientSession() as session:
+                            # 设置较长的超时时间
+                            timeout = aiohttp.ClientTimeout(total=60)  # 1分钟
+
+                            # 构造请求参数
+                            json_param = {
+                                "AppID": app_id,
+                                "AttachId": attach_id,
+                                "DataLen": total_len,
+                                "Section": {
+                                    "DataLen": current_chunk_size,
+                                    "StartPos": start_pos
+                                },
+                                "UserName": "",  # 可选参数
+                                "Wxid": bot.wxid
+                            }
+
+                            logger.info(f"Dify: 调用下载文件API: AttachId={attach_id}, 起始位置: {start_pos}, 大小: {current_chunk_size}")
+                            response = await session.post(
+                                url,
+                                json=json_param,
+                                timeout=timeout
+                            )
+
+                            # 处理响应
+                            try:
+                                json_resp = await response.json()
+
+                                if json_resp.get("Success"):
+                                    data = json_resp.get("Data")
+
+                                    # 尝试从不同的响应格式中获取文件数据
+                                    chunk_data = None
+                                    if isinstance(data, dict):
+                                        if "buffer" in data:
+                                            chunk_data = base64.b64decode(data["buffer"])
+                                        elif "data" in data and isinstance(data["data"], dict) and "buffer" in data["data"]:
+                                            chunk_data = base64.b64decode(data["data"]["buffer"])
+                                        else:
+                                            try:
+                                                chunk_data = base64.b64decode(str(data))
+                                            except:
+                                                logger.error(f"Dify: 无法解析文件数据: {data}")
+                                    elif isinstance(data, str):
+                                        try:
+                                            chunk_data = base64.b64decode(data)
+                                        except:
+                                            logger.error(f"Dify: 无法解析文件数据字符串")
+
+                                    if chunk_data:
+                                        # 将分段数据添加到完整文件中
+                                        file_data.extend(chunk_data)
+                                        logger.info(f"Dify: 第 {i+1}/{chunks} 段下载成功，大小: {len(chunk_data)} 字节")
+                                    else:
+                                        logger.warning(f"Dify: 第 {i+1}/{chunks} 段数据为空")
+                                        break
+                                else:
+                                    error_msg = json_resp.get("Message", "Unknown error")
+                                    logger.error(f"Dify: 第 {i+1}/{chunks} 段下载失败: {error_msg}")
+                                    break
+                            except Exception as e:
+                                logger.error(f"Dify: 解析第 {i+1}/{chunks} 段响应失败: {e}")
+                                break
+
+                    # 检查文件是否下载完整
+                    if len(file_data) > 0:
+                        logger.info(f"Dify: 文件下载成功: AttachId={attach_id}, 实际大小: {len(file_data)} 字节")
+                        download_success = True
+                        break
+                    else:
+                        logger.warning("Dify: 文件数据为空，尝试下一个API端点")
+
+                # 如果文件下载成功
+                if download_success:
+                    # 确定文件类型
+                    mime_type = mimetypes.guess_type(f"{title}.{file_extend}")[0] or "application/octet-stream"
+
+                    # 确保文件数据是二进制格式
+                    if isinstance(file_data, str):
+                        try:
+                            binary_file_data = base64.b64decode(file_data)
+                            logger.info(f"Dify: 将base64字符串转换为二进制数据，大小: {len(binary_file_data)} 字节")
+                        except Exception as e:
+                            logger.error(f"Dify: Base64解码失败: {e}")
+                            binary_file_data = file_data.encode('utf-8')
+                    elif isinstance(file_data, bytearray):
+                        binary_file_data = bytes(file_data)
+                        logger.info(f"Dify: 将bytearray转换为二进制数据，大小: {len(binary_file_data)} 字节")
+                    else:
+                        binary_file_data = file_data
+
+                    # 处理文件名，避免重复的扩展名
+                    if title.lower().endswith(f".{file_extend.lower()}"):
+                        file_name = title  # 如果标题已经包含扩展名，直接使用
+                    else:
+                        file_name = f"{title}.{file_extend}"  # 否则添加扩展名
+
+                    logger.info(f"Dify: 处理后的文件名: {file_name}")
+
+                    # 缓存文件
+                    from_wxid = message["FromWxid"]
+                    sender_wxid = message.get("SenderWxid", from_wxid)
+                    self.cache_file(sender_wxid, binary_file_data, file_name, mime_type)
+
+                    # 如果是私聊，也缓存到聊天对象的ID
+                    if from_wxid != sender_wxid:
+                        self.cache_file(from_wxid, binary_file_data, file_name, mime_type)
+
+                    # 发送下载成功通知
+                    await bot.send_text_message(
+                        message["FromWxid"],
+                        f"Dify: 文件下载成功！\n文件名: {file_name}\n文件大小: {len(file_data)/1024:.2f} KB\n\n文件已缓存，在接下来的5分钟内与我对话时将自动包含此文件。"
+                    )
+                else:
+                    logger.warning("Dify: 所有API端点尝试失败")
+                    await bot.send_text_message(
+                        message["FromWxid"],
+                        "Dify: 文件下载失败，请重新发送。"
+                    )
+        except Exception as e:
+            logger.error(f"Dify: 处理XML消息时发生错误: {str(e)}")
+            logger.error(traceback.format_exc())
+            await bot.send_text_message(
+                message["FromWxid"],
+                f"Dify: 处理文件时发生异常: {str(e)}"
+            )
+
+        return True  # 允许后续插件处理
+
     @on_file_message(priority=20)
     async def handle_file(self, bot: WechatAPIClient, message: dict):
         """处理文件消息"""
         if not self.enable:
             return
-        # 文件消息处理功能已禁用，直接返回
-        logger.info("文件消息处理功能已禁用，跳过处理")
-        return
+
+        try:
+            # 获取文件消息的关键信息
+            msg_id = message.get("MsgId")
+            from_wxid = message.get("FromWxid")
+            sender_wxid = message.get("SenderWxid")
+            file_content = message.get("Content")
+
+            logger.info(f"收到文件消息: MsgId={msg_id}, FromWxid={from_wxid}, SenderWxid={sender_wxid}")
+
+            # 如果Content是二进制数据，直接使用
+            if isinstance(file_content, bytes) and len(file_content) > 0:
+                logger.info(f"文件内容是二进制数据，大小: {len(file_content)} 字节")
+
+                # 获取文件名和类型
+                file_name = message.get("FileName", f"file_{int(time.time())}")
+
+                # 检测文件类型
+                mime_type = "application/octet-stream"  # 默认类型
+                try:
+                    kind = filetype.guess(file_content)
+                    if kind is not None:
+                        mime_type = kind.mime
+                        # 如果文件名没有后缀，添加正确的后缀
+                        if not os.path.splitext(file_name)[1]:
+                            file_name = f"{file_name}.{kind.extension}"
+                except Exception as e:
+                    logger.error(f"检测文件类型失败: {e}")
+
+            # 如果Content是XML字符串，解析并下载文件
+            elif isinstance(file_content, str) and ("<appmsg" in file_content or "<msg>" in file_content):
+                logger.info("文件内容是XML格式，尝试解析并下载文件")
+                try:
+                    # 解析XML
+                    import xml.etree.ElementTree as ET
+                    import mimetypes
+                    import base64
+
+                    # 处理可能的XML格式差异
+                    if "<msg>" in file_content and "<appmsg" in file_content:
+                        # 提取<appmsg>部分
+                        start = file_content.find("<appmsg")
+                        end = file_content.find("</appmsg>") + 9
+                        appmsg_xml = file_content[start:end]
+                        root = ET.fromstring(f"<root>{appmsg_xml}</root>")
+                        appmsg = root.find('appmsg')
+                    else:
+                        root = ET.fromstring(file_content)
+                        appmsg = root.find('.//appmsg')
+
+                    if appmsg is not None:
+                        # 获取文件名
+                        title = appmsg.find('.//title')
+                        file_name = title.text if title is not None and title.text else f"file_{int(time.time())}"
+
+                        # 获取文件类型
+                        fileext = appmsg.find('.//fileext')
+                        if fileext is not None and fileext.text:
+                            ext = fileext.text.lower()
+                            if not file_name.lower().endswith(f".{ext}"):
+                                file_name = f"{file_name}.{ext}"
+                            mime_type = mimetypes.guess_type(file_name)[0] or "application/octet-stream"
+                        else:
+                            mime_type = "application/octet-stream"
+
+                        # 获取下载所需信息
+                        appattach = appmsg.find('.//appattach')
+                        if appattach is not None:
+                            attachid = appattach.find('.//attachid')
+                            aeskey = appattach.find('.//aeskey')
+                            totallen = appattach.find('.//totallen')
+
+                            # 获取文件大小
+                            total_len = int(totallen.text) if totallen is not None and totallen.text and totallen.text.isdigit() else 0
+
+                            # 获取附件ID和其他下载所需信息
+                            attach_id = None
+                            cdn_url = None
+                            aes_key = None
+
+                            if attachid is not None and attachid.text:
+                                attach_id = attachid.text.strip()
+                                logger.info(f"找到附件ID: {attach_id}")
+
+                            # 获取CDN URL和AES密钥（用于方法3）
+                            cdnattachurl = appattach.find('.//cdnattachurl')
+                            if cdnattachurl is not None and cdnattachurl.text:
+                                cdn_url = cdnattachurl.text.strip()
+                                logger.info(f"找到CDN URL: {cdn_url}")
+
+                            if aeskey is not None and aeskey.text:
+                                aes_key = aeskey.text.strip()
+                                logger.info(f"找到AES密钥: {aes_key}")
+
+                                # 开始下载文件
+                                logger.info(f"开始下载文件: {file_name}, 大小: {total_len} 字节")
+
+                                # 尝试不同的下载方法
+                                try:
+                                    file_data = None
+
+                                    # 方法1: 如果有附件ID，使用download_attach方法
+                                    if attach_id:
+                                        logger.debug(f"方法1: 尝试使用download_attach方法下载文件，附件ID: {attach_id}")
+                                        file_data = await bot.download_attach(attach_id)
+
+                                    # 方法3: 如果有CDN URL和AES密钥，使用download_image方法
+                                    if not file_data and cdn_url and aes_key:
+                                        logger.debug(f"方法3: 尝试使用download_image方法下载文件，CDN URL: {cdn_url}")
+                                        try:
+                                            image_data = await bot.download_image(aes_key, cdn_url)
+                                            if image_data:
+                                                if isinstance(image_data, str):
+                                                    try:
+                                                        file_data = base64.b64decode(image_data)
+                                                        logger.info(f"使用download_image成功下载文件，大小: {len(file_data)} 字节")
+                                                    except Exception as e:
+                                                        logger.error(f"Base64解码失败: {e}")
+                                        except Exception as e:
+                                            logger.error(f"download_image方法失败: {e}")
+                                    if not file_data:
+                                        # 方法2: 使用Tools/DownloadFile API分段下载文件
+                                        logger.debug(f"尝试使用Tools/DownloadFile API分段下载文件")
+
+                                        # 分段下载大文件
+                                        chunk_size = 64 * 1024  # 64KB
+                                        chunks = (total_len + chunk_size - 1) // chunk_size  # 向上取整
+                                        file_data_bytes = bytearray()
+                                        download_success = False
+
+                                        # 尝试两个不同的API端点
+                                        urls = [
+                                            f'http://{bot.ip}:{bot.port}/api/Tools/DownloadFile',
+                                            f'http://{bot.ip}:{bot.port}/VXAPI/Tools/DownloadFile'
+                                        ]
+
+                                        # 尝试每个API端点
+                                        for url in urls:
+                                            if download_success:
+                                                break
+
+                                            logger.info(f"尝试使用 {url} 分段下载文件，总大小: {total_len} 字节，分 {chunks} 段下载")
+                                            file_data_bytes.clear()  # 清空之前的数据
+
+                                            try:
+                                                async with aiohttp.ClientSession() as session:
+                                                    # 分段下载
+                                                    for i in range(chunks):
+                                                        start_pos = i * chunk_size
+                                                        # 最后一段可能不足 chunk_size
+                                                        current_chunk_size = min(chunk_size, total_len - start_pos)
+
+                                                        logger.debug(f"下载第 {i+1}/{chunks} 段，起始位置: {start_pos}，大小: {current_chunk_size} 字节")
+
+                                                        # 构造请求参数
+                                                        json_param = {
+                                                            "AppID": "",  # 可选参数
+                                                            "AttachId": attach_id,
+                                                            "DataLen": total_len,
+                                                            "Section": {
+                                                                "DataLen": current_chunk_size,
+                                                                "StartPos": start_pos
+                                                            },
+                                                            "UserName": "",  # 可选参数
+                                                            "Wxid": bot.wxid
+                                                        }
+
+                                                        # 设置较长的超时时间
+                                                        timeout = aiohttp.ClientTimeout(total=60)  # 1分钟
+
+                                                        # 发送请求
+                                                        try:
+                                                            async with session.post(url, json=json_param, timeout=timeout) as resp:
+                                                                if resp.status == 200:
+                                                                    resp_json = await resp.json()
+                                                                    if resp_json.get("Success"):
+                                                                        data = resp_json.get("Data")
+                                                                        if isinstance(data, str):
+                                                                            try:
+                                                                                chunk_data = base64.b64decode(data)
+                                                                                file_data_bytes.extend(chunk_data)
+                                                                                logger.debug(f"第 {i+1}/{chunks} 段下载成功，大小: {len(chunk_data)} 字节")
+                                                                            except Exception as e:
+                                                                                logger.error(f"Base64解码失败: {e}")
+                                                                                break
+                                                                        elif isinstance(data, dict) and "buffer" in data:
+                                                                            try:
+                                                                                chunk_data = base64.b64decode(data["buffer"])
+                                                                                file_data_bytes.extend(chunk_data)
+                                                                                logger.debug(f"第 {i+1}/{chunks} 段下载成功，大小: {len(chunk_data)} 字节")
+                                                                            except Exception as e:
+                                                                                logger.error(f"Buffer Base64解码失败: {e}")
+                                                                                break
+                                                                        else:
+                                                                            logger.warning(f"无法解析响应数据: {data}")
+                                                                            break
+                                                                    else:
+                                                                        logger.warning(f"API返回错误: {resp_json}")
+                                                                        break
+                                                                else:
+                                                                    logger.warning(f"API请求失败: {resp.status}")
+                                                                    break
+                                                        except Exception as e:
+                                                            logger.error(f"下载第 {i+1}/{chunks} 段时出错: {e}")
+                                                            break
+
+                                                    # 检查文件是否下载完整
+                                                    if len(file_data_bytes) > 0:
+                                                        logger.info(f"文件分段下载成功，实际大小: {len(file_data_bytes)} 字节")
+                                                        file_data = base64.b64encode(file_data_bytes).decode('utf-8')
+                                                        download_success = True
+                                                        break
+                                                    else:
+                                                        logger.warning(f"文件下载失败，数据为空")
+                                            except Exception as e:
+                                                logger.error(f"尝试使用 {url} 分段下载文件时出错: {e}")
+                                                logger.error(traceback.format_exc())
+
+                                        # 如果所有尝试都失败
+                                        if not download_success:
+                                            logger.error("所有API端点尝试失败")
+                                except Exception as e:
+                                    logger.error(f"下载文件异常: {e}")
+                                    logger.error(traceback.format_exc())
+                                    file_data = None
+
+                                if file_data:
+                                    # 如果返回的是base64字符串，解码为二进制
+                                    if isinstance(file_data, str):
+                                        try:
+                                            file_content = base64.b64decode(file_data)
+                                        except Exception as e:
+                                            logger.error(f"Base64解码失败: {e}")
+                                            file_content = file_data.encode('utf-8')
+                                    elif isinstance(file_data, dict) and "buffer" in file_data:
+                                        try:
+                                            file_content = base64.b64decode(file_data["buffer"])
+                                        except Exception as e:
+                                            logger.error(f"Buffer Base64解码失败: {e}")
+                                            file_content = str(file_data).encode('utf-8')
+                                    else:
+                                        file_content = str(file_data).encode('utf-8')
+
+                                    logger.info(f"文件下载成功，大小: {len(file_content)} 字节")
+                                else:
+                                    logger.error("文件下载失败或内容为空")
+                                    await bot.send_text_message(from_wxid, "文件下载失败，请重新发送。")
+                                    return
+                            else:
+                                logger.error("XML中缺少必要的附件ID")
+                                await bot.send_text_message(from_wxid, "无法解析文件信息，请重新发送。")
+                                return
+                        else:
+                            logger.error("XML中缺少appattach节点")
+                            await bot.send_text_message(from_wxid, "无法解析文件信息，请重新发送。")
+                            return
+                    else:
+                        logger.error("XML格式不正确，无法解析appmsg节点")
+                        await bot.send_text_message(from_wxid, "无法解析文件信息，请重新发送。")
+                        return
+                except Exception as e:
+                    logger.error(f"解析XML或下载文件失败: {e}")
+                    logger.error(traceback.format_exc())
+                    await bot.send_text_message(from_wxid, f"处理文件失败: {str(e)}")
+                    return
+            else:
+                logger.warning(f"文件内容格式不支持: {type(file_content)}")
+                await bot.send_text_message(from_wxid, "不支持的文件格式，请重新发送。")
+                return
+
+            # 缓存文件
+            self.cache_file(sender_wxid, file_content, file_name, mime_type)
+
+            # 如果是私聊，也缓存到聊天对象的ID
+            if from_wxid != sender_wxid:
+                self.cache_file(from_wxid, file_content, file_name, mime_type)
+
+            # 发送确认消息
+            await bot.send_text_message(from_wxid, f"已收到文件: {file_name}\n大小: {len(file_content)/1024:.2f} KB\n类型: {mime_type}\n\n文件已缓存，在接下来的5分钟内与我对话时将自动包含此文件。")
+
+        except Exception as e:
+            logger.error(f"处理文件消息失败: {e}")
+            logger.error(traceback.format_exc())
+            try:
+                await bot.send_text_message(message.get("FromWxid", ""), f"处理文件失败: {str(e)}")
+            except:
+                pass
