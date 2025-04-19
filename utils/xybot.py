@@ -2,6 +2,7 @@ import tomllib
 import xml.etree.ElementTree as ET
 from typing import Dict, Any
 import asyncio
+import io
 
 from loguru import logger
 
@@ -597,19 +598,60 @@ class XYBot:
             logger.error("解析图片消息失败: {}, 内容: {}", e, message["Content"])
             return
 
-        # 尝试使用新的get_msg_image方法下载图片
+        # 尝试使用新的get_msg_image方法分段下载图片
         try:
             if length and length.isdigit():
                 img_length = int(length)
                 logger.debug(f"尝试使用get_msg_image下载图片: MsgId={message.get('MsgId')}, length={img_length}")
-                image_data = await self.bot.get_msg_image(message.get('MsgId'), message["FromWxid"], img_length)
-                if image_data and len(image_data) > 0:
-                    import base64
-                    message["Content"] = base64.b64encode(image_data).decode('utf-8')
-                    logger.debug(f"使用get_msg_image下载图片成功: {len(image_data)} 字节")
+
+                # 分段下载图片
+                chunk_size = 64 * 1024  # 64KB
+                chunks = (img_length + chunk_size - 1) // chunk_size  # 向上取整
+                full_image_data = bytearray()
+
+                logger.info(f"开始分段下载图片，总大小: {img_length} 字节，分 {chunks} 段下载")
+
+                download_success = True
+                for i in range(chunks):
+                    try:
+                        # 下载当前段
+                        start_pos = i * chunk_size
+                        chunk_data = await self.bot.get_msg_image(message.get('MsgId'), message["FromWxid"], img_length, start_pos=start_pos)
+                        if chunk_data and len(chunk_data) > 0:
+                            full_image_data.extend(chunk_data)
+                            logger.debug(f"第 {i+1}/{chunks} 段下载成功，大小: {len(chunk_data)} 字节")
+                        else:
+                            logger.error(f"第 {i+1}/{chunks} 段下载失败，数据为空")
+                            download_success = False
+                            break
+                    except Exception as e:
+                        logger.error(f"下载第 {i+1}/{chunks} 段时出错: {e}")
+                        download_success = False
+                        break
+
+                if download_success and len(full_image_data) > 0:
+                    # 验证图片数据
+                    try:
+                        import base64
+                        from PIL import Image, ImageFile
+                        ImageFile.LOAD_TRUNCATED_IMAGES = True  # 允许加载截断的图片
+
+                        image_data = bytes(full_image_data)
+                        # 验证图片数据
+                        Image.open(io.BytesIO(image_data))
+                        message["Content"] = base64.b64encode(image_data).decode('utf-8')
+                        logger.info(f"分段下载图片成功，总大小: {len(image_data)} 字节")
+                    except Exception as img_error:
+                        logger.error(f"验证分段下载的图片数据失败: {img_error}")
+                        # 如果验证失败，尝试使用download_image
+                        if aeskey and cdnmidimgurl:
+                            logger.warning("尝试使用download_image下载图片")
+                            message["Content"] = await self.bot.download_image(aeskey, cdnmidimgurl)
                 else:
-                    logger.warning("使用get_msg_image下载图片失败，尝试使用download_image")
+                    logger.warning(f"分段下载图片失败，已下载: {len(full_image_data)}/{img_length} 字节")
+                    # 如果分段下载失败，尝试使用download_image
                     if aeskey and cdnmidimgurl:
+                        logger.warning("尝试使用download_image下载图片")
                         message["Content"] = await self.bot.download_image(aeskey, cdnmidimgurl)
             elif aeskey and cdnmidimgurl:
                 logger.debug("使用download_image下载图片")
