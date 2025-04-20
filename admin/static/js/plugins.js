@@ -19,6 +19,26 @@ function getFieldLabel(field) {
     return labels[field] || field;
 }
 
+// 比较版本号
+function compareVersions(version1, version2) {
+    // 将版本号分解为数字数组
+    const v1 = version1.split('.').map(Number);
+    const v2 = version2.split('.').map(Number);
+
+    // 补全数组长度，使其长度相同
+    const maxLength = Math.max(v1.length, v2.length);
+    while (v1.length < maxLength) v1.push(0);
+    while (v2.length < maxLength) v2.push(0);
+
+    // 依次比较每个部分
+    for (let i = 0; i < maxLength; i++) {
+        if (v1[i] > v2[i]) return 1;  // version1 更新
+        if (v1[i] < v2[i]) return -1; // version2 更新
+    }
+
+    return 0; // 版本相同
+}
+
 // 手动打开模态框
 function openModalManually(modalId) {
     try {
@@ -80,11 +100,11 @@ document.addEventListener('DOMContentLoaded', function() {
     console.log('jQuery版本:', typeof $ !== 'undefined' ? ($.fn.jquery || '存在但无版本信息') : '未加载');
     console.log('模态框元素:', document.getElementById('upload-plugin-modal'));
 
-    // 加载插件列表
-    loadPlugins();
-
-    // 加载插件市场
-    loadPluginMarket();
+    // 先加载插件市场，然后再加载本地插件
+    loadPluginMarket().then(() => {
+        // 市场数据加载完成后再加载本地插件
+        loadPlugins();
+    });
 
     // 为插件过滤按钮添加点击事件
     const filterButtons = document.querySelectorAll('.plugin-filter .btn-group .btn');
@@ -271,6 +291,36 @@ async function loadPlugins() {
             plugins = data.data.plugins;
             console.log('插件信息:', plugins); // 调试输出
             document.getElementById('plugin-count').textContent = plugins.length;
+
+            // 检查插件更新状态
+            let updateCount = 0;
+            let updatablePlugins = [];
+
+            if (marketPlugins && Array.isArray(marketPlugins) && marketPlugins.length > 0) {
+                // 检查是否有插件需要更新
+                plugins.forEach(plugin => {
+                    const marketPlugin = marketPlugins.find(p => p.name === plugin.name);
+                    if (marketPlugin && marketPlugin.version) {
+                        // 比较版本号
+                        if (compareVersions(marketPlugin.version, plugin.version || '1.0.0') > 0) {
+                            updateCount++;
+                            updatablePlugins.push({
+                                name: plugin.name,
+                                currentVersion: plugin.version || '1.0.0',
+                                newVersion: marketPlugin.version
+                            });
+                            console.log(`插件 ${plugin.name} 有更新，当前版本: ${plugin.version || '1.0.0'}，最新版本: ${marketPlugin.version}`);
+                        }
+                    }
+                });
+
+                // 如果有插件需要更新，显示提示
+                if (updateCount > 0) {
+                    // 创建或更新右上角更新提示
+                    createUpdateNotification(updateCount, updatablePlugins);
+                }
+            }
+
             filterPlugins(currentFilter);
         } else {
             throw new Error(data.error || '加载插件失败');
@@ -323,6 +373,19 @@ function renderPluginList(pluginsList) {
         const statusClass = plugin.enabled ? 'success' : 'secondary';
         const statusText = plugin.enabled ? '已启用' : '已禁用';
 
+        // 检查插件是否有更新
+        let hasUpdate = false;
+        let marketVersion = '';
+
+        if (marketPlugins && Array.isArray(marketPlugins)) {
+            const marketPlugin = marketPlugins.find(p => p.name === plugin.name);
+            if (marketPlugin && marketPlugin.version) {
+                marketVersion = marketPlugin.version;
+                // 比较版本号
+                hasUpdate = compareVersions(marketVersion, plugin.version || '1.0.0') > 0;
+            }
+        }
+
         // 根据插件名生成稳定的渐变色
         const colors = [
             ['#1abc9c', '#16a085'], // 绿松石
@@ -346,6 +409,7 @@ function renderPluginList(pluginsList) {
         cardElement.innerHTML = `
             <div class="card-header p-3 pt-4 pb-4 bg-gradient-light border-0 position-relative" style="background: linear-gradient(135deg, #f8f9fa, #e9ecef);">
                 <div class="plugin-status-container">
+                    ${hasUpdate ? `<span class="badge bg-warning me-2" title="可更新到: v${marketVersion}">有更新</span>` : ''}
                     <span class="badge bg-${statusClass} status-badge">${statusText}</span>
                     <div class="form-check form-switch plugin-switch ms-2">
                         <input class="form-check-input plugin-toggle" type="checkbox" id="toggle-${plugin.id}" ${plugin.enabled ? 'checked' : ''} data-plugin-id="${plugin.id}">
@@ -376,6 +440,10 @@ function renderPluginList(pluginsList) {
                             <button class="btn btn-sm btn-outline-primary rounded-pill btn-config" data-plugin-id="${plugin.id}" ${!plugin.enabled ? 'disabled' : ''}>
                                 <i class="bi bi-gear-fill me-1"></i>配置
                             </button>
+                            ${hasUpdate ? `
+                            <button class="btn btn-sm btn-outline-warning rounded-pill btn-update" data-plugin-id="${plugin.id}" data-plugin-name="${plugin.name}" data-market-version="${marketVersion}">
+                                <i class="bi bi-arrow-up-circle me-1"></i>更新
+                            </button>` : ''}
                             ${plugin.id !== 'ManagePlugin' ? `
                             <button class="btn btn-sm btn-outline-danger rounded-pill btn-delete" data-plugin-id="${plugin.id}">
                                 <i class="bi bi-trash me-1"></i>删除
@@ -551,6 +619,25 @@ function renderPluginList(pluginsList) {
         button.addEventListener('click', function() {
             const pluginId = this.getAttribute('data-plugin-id');
             confirmDeletePlugin(pluginId);
+        });
+    });
+
+    // 绑定更新按钮事件
+    document.querySelectorAll('.btn-update').forEach(button => {
+        button.addEventListener('click', function() {
+            const pluginId = this.getAttribute('data-plugin-id');
+            const pluginName = this.getAttribute('data-plugin-name');
+            const marketVersion = this.getAttribute('data-market-version');
+
+            // 在插件市场中查找对应的插件
+            const marketPlugin = marketPlugins.find(p => p.name === pluginName);
+            if (marketPlugin) {
+                // 调用安装插件函数进行更新
+                installPlugin(marketPlugin);
+                showToast(`正在更新插件 ${pluginName} 到版本 ${marketVersion}`, 'info');
+            } else {
+                showToast(`无法找到插件 ${pluginName} 的市场信息`, 'danger');
+            }
         });
     });
 }
@@ -837,6 +924,179 @@ function showToast(message, type = 'info') {
     toastEl.addEventListener('hidden.bs.toast', function() {
         this.remove();
     });
+}
+
+// 创建右上角更新提示
+function createUpdateNotification(updateCount, updatablePlugins) {
+    // 移除现有的更新提示
+    const existingNotification = document.getElementById('update-notification');
+    if (existingNotification) {
+        existingNotification.remove();
+    }
+
+    if (updateCount <= 0) return;
+
+    // 创建更新提示元素
+    const notification = document.createElement('div');
+    notification.id = 'update-notification';
+    notification.className = 'position-fixed top-0 end-0 p-3';
+    notification.style.zIndex = '1050';
+
+    // 生成插件更新列表HTML
+    let pluginsListHtml = '';
+    updatablePlugins.forEach(plugin => {
+        pluginsListHtml += `
+            <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
+                <div>
+                    <strong>${plugin.name}</strong>
+                    <div class="small text-muted">${plugin.currentVersion} → ${plugin.newVersion}</div>
+                </div>
+                <button class="btn btn-sm btn-outline-warning rounded-pill btn-update-plugin"
+                        data-plugin-name="${plugin.name}"
+                        data-current-version="${plugin.currentVersion}"
+                        data-new-version="${plugin.newVersion}">
+                    <i class="bi bi-arrow-up-circle me-1"></i>更新
+                </button>
+            </div>
+        `;
+    });
+
+    // 生成完整的提示HTML
+    notification.innerHTML = `
+        <div class="toast show" role="alert" aria-live="assertive" aria-atomic="true">
+            <div class="toast-header bg-warning text-white">
+                <i class="bi bi-arrow-up-circle-fill me-2"></i>
+                <strong class="me-auto">插件更新可用</strong>
+                <small>${updateCount} 个插件可更新</small>
+                <button type="button" class="btn-close" data-bs-dismiss="toast" aria-label="Close"></button>
+            </div>
+            <div class="toast-body">
+                <div class="update-plugins-list">
+                    ${pluginsListHtml}
+                </div>
+                <div class="d-flex justify-content-between mt-3">
+                    <button class="btn btn-sm btn-outline-secondary" id="dismiss-update-notification">
+                        <i class="bi bi-x-circle me-1"></i>关闭
+                    </button>
+                    <button class="btn btn-sm btn-warning" id="update-all-plugins">
+                        <i class="bi bi-arrow-repeat me-1"></i>更新全部
+                    </button>
+                </div>
+            </div>
+        </div>
+    `;
+
+    // 添加到文档中
+    document.body.appendChild(notification);
+
+    // 添加样式
+    if (!document.getElementById('update-notification-styles')) {
+        const styleEl = document.createElement('style');
+        styleEl.id = 'update-notification-styles';
+        styleEl.textContent = `
+            #update-notification .toast {
+                min-width: 350px;
+                box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+                border: none;
+                border-radius: 0.5rem;
+            }
+            #update-notification .toast-header {
+                background-color: #ffc107;
+                color: #212529;
+                border-top-left-radius: 0.5rem;
+                border-top-right-radius: 0.5rem;
+                border-bottom: 1px solid rgba(0,0,0,0.05);
+            }
+            #update-notification .update-plugins-list {
+                max-height: 200px;
+                overflow-y: auto;
+            }
+            #update-notification .btn-sm {
+                padding: 0.25rem 0.5rem;
+                font-size: 0.75rem;
+            }
+        `;
+        document.head.appendChild(styleEl);
+    }
+
+    // 添加事件监听器
+    // 关闭按钮
+    document.getElementById('dismiss-update-notification').addEventListener('click', function() {
+        document.getElementById('update-notification').remove();
+    });
+
+    // 更新全部按钮
+    document.getElementById('update-all-plugins').addEventListener('click', function() {
+        updateAllPlugins(updatablePlugins);
+    });
+
+    // 单个插件更新按钮
+    document.querySelectorAll('.btn-update-plugin').forEach(button => {
+        button.addEventListener('click', function() {
+            const pluginName = this.getAttribute('data-plugin-name');
+            const currentVersion = this.getAttribute('data-current-version');
+            const newVersion = this.getAttribute('data-new-version');
+
+            // 在插件市场中查找对应的插件
+            const marketPlugin = marketPlugins.find(p => p.name === pluginName);
+            if (marketPlugin) {
+                // 调用安装插件函数进行更新
+                installPlugin(marketPlugin);
+                showToast(`正在更新插件 ${pluginName} 从 ${currentVersion} 到 ${newVersion}`, 'info');
+            } else {
+                showToast(`无法找到插件 ${pluginName} 的市场信息`, 'danger');
+            }
+        });
+    });
+}
+
+// 更新所有插件
+function updateAllPlugins(updatablePlugins) {
+    if (!updatablePlugins || updatablePlugins.length === 0) return;
+
+    showToast(`正在更新 ${updatablePlugins.length} 个插件...`, 'info');
+
+    // 创建一个更新队列
+    const updateQueue = [...updatablePlugins];
+
+    // 递归更新插件
+    function processNextPlugin() {
+        if (updateQueue.length === 0) {
+            // 全部更新完成
+            showToast('所有插件更新完成', 'success');
+            // 移除更新提示
+            const notification = document.getElementById('update-notification');
+            if (notification) notification.remove();
+            return;
+        }
+
+        const plugin = updateQueue.shift();
+        const marketPlugin = marketPlugins.find(p => p.name === plugin.name);
+
+        if (marketPlugin) {
+            // 安装插件
+            installPlugin(marketPlugin)
+                .then(() => {
+                    console.log(`插件 ${plugin.name} 更新成功`);
+                    // 继续处理下一个插件
+                    setTimeout(processNextPlugin, 1000); // 添加延迟，避免请求过快
+                })
+                .catch(error => {
+                    console.error(`插件 ${plugin.name} 更新失败:`, error);
+                    showToast(`插件 ${plugin.name} 更新失败: ${error.message}`, 'danger');
+                    // 继续处理下一个插件
+                    setTimeout(processNextPlugin, 1000);
+                });
+        } else {
+            console.error(`无法找到插件 ${plugin.name} 的市场信息`);
+            showToast(`无法找到插件 ${plugin.name} 的市场信息`, 'danger');
+            // 继续处理下一个插件
+            setTimeout(processNextPlugin, 1000);
+        }
+    }
+
+    // 开始处理第一个插件
+    processNextPlugin();
 }
 
 // 确认删除插件
@@ -1172,8 +1432,20 @@ function renderMarketPlugins(marketPluginsList) {
             tagsHtml += '</div>';
         }
 
-        // 检查插件是否已安装
-        const isInstalled = plugins && Array.isArray(plugins) && plugins.some(p => p.name === plugin.name);
+        // 检查插件是否已安装，并比较版本
+        let isInstalled = false;
+        let hasUpdate = false;
+        let installedVersion = '';
+
+        if (plugins && Array.isArray(plugins)) {
+            const installedPlugin = plugins.find(p => p.name === plugin.name);
+            if (installedPlugin) {
+                isInstalled = true;
+                installedVersion = installedPlugin.version || '1.0.0';
+                // 比较版本号
+                hasUpdate = compareVersions(plugin.version, installedVersion) > 0;
+            }
+        }
 
         // 生成渐变色背景（根据插件名生成一个稳定的颜色）
         const colors = [
@@ -1203,7 +1475,14 @@ function renderMarketPlugins(marketPluginsList) {
                             <h5 class="card-title mb-0 fw-bold text-truncate" title="${plugin.name}">${plugin.name}</h5>
                             <div class="text-muted small">v${plugin.version}</div>
                         </div>
-                        ${isInstalled ? '<span class="badge bg-success ms-auto">已安装</span>' : ''}
+                        <div class="ms-auto d-flex flex-column align-items-end">
+                            ${isInstalled ?
+                                (hasUpdate ?
+                                    `<span class="badge bg-warning mb-1" title="当前版本: v${installedVersion}">有更新</span>
+                                     <span class="badge bg-success">已安装</span>` :
+                                    '<span class="badge bg-success">已安装</span>') :
+                                ''}
+                        </div>
                     </div>
                 </div>
                 <div class="card-body p-3 d-flex flex-column">
@@ -1214,8 +1493,8 @@ function renderMarketPlugins(marketPluginsList) {
                             <i class="bi bi-person me-1"></i>${plugin.author}
                         </div>
                         <div class="d-flex justify-content-end">
-                            <button class="btn ${isInstalled ? 'btn-outline-primary' : 'btn-primary'} btn-sm rounded-pill btn-install-plugin" data-plugin-index="${index}">
-                                <i class="bi ${isInstalled ? 'bi-arrow-repeat' : 'bi-download'} me-1"></i>${isInstalled ? '重新安装' : '安装'}
+                            <button class="btn ${isInstalled ? (hasUpdate ? 'btn-outline-warning' : 'btn-outline-primary') : 'btn-primary'} btn-sm rounded-pill btn-install-plugin" data-plugin-index="${index}">
+                                <i class="bi ${isInstalled ? (hasUpdate ? 'bi-arrow-up-circle' : 'bi-arrow-repeat') : 'bi-download'} me-1"></i>${isInstalled ? (hasUpdate ? '更新' : '重新安装') : '安装'}
                             </button>
                         </div>
                     </div>
@@ -1549,92 +1828,109 @@ function storeOfflineSubmission(pluginData, tempId) {
 
 // 安装插件
 async function installPlugin(plugin) {
-    const button = document.querySelector(`.btn-install-plugin[data-plugin-index="${marketPlugins.indexOf(plugin)}"]`);
-    const originalText = button.innerHTML;
+    return new Promise(async (resolve, reject) => {
+        // 查找安装按钮（如果存在）
+        const button = document.querySelector(`.btn-install-plugin[data-plugin-index="${marketPlugins.indexOf(plugin)}"]`);
+        const originalText = button ? button.innerHTML : null;
 
-    // 显示加载状态
-    button.disabled = true;
-    button.innerHTML = `<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>正在安装...`;
-
-    try {
-        // 获取 GitHub URL
-        const githubUrl = plugin.github_url;
-        if (!githubUrl) {
-            throw new Error('插件缺少 GitHub 地址');
+        // 显示加载状态
+        if (button) {
+            button.disabled = true;
+            button.innerHTML = `<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>正在安装...`;
         }
 
-        // 处理 GitHub URL
-        let cleanGithubUrl = githubUrl;
-        // 移除 .git 后缀（如果存在）
-        if (cleanGithubUrl.endsWith('.git')) {
-            cleanGithubUrl = cleanGithubUrl.slice(0, -4);
-        }
+        try {
+            // 获取 GitHub URL
+            const githubUrl = plugin.github_url;
+            if (!githubUrl) {
+                throw new Error('插件缺少 GitHub 地址');
+            }
 
-        // 检查是否已安装（重新安装）
-        const isReinstall = plugins && Array.isArray(plugins) && plugins.some(p => p.name === plugin.name);
+            // 处理 GitHub URL
+            let cleanGithubUrl = githubUrl;
+            // 移除 .git 后缀（如果存在）
+            if (cleanGithubUrl.endsWith('.git')) {
+                cleanGithubUrl = cleanGithubUrl.slice(0, -4);
+            }
 
-        // 发送安装请求到本地后端
-        console.log(`正在向本地后端发送${isReinstall ? '重新' : ''}安装请求...`);
-        const response = await fetch('/api/plugin_market/install', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Accept': 'application/json'
-            },
-            body: JSON.stringify({
-                plugin_id: plugin.name,
-                plugin_data: {
-                    name: plugin.name,
-                    description: plugin.description,
-                    author: plugin.author,
-                    version: plugin.version,
-                    github_url: cleanGithubUrl,
-                    config: {},
-                    requirements: []
+            // 检查是否已安装（重新安装）
+            const isReinstall = plugins && Array.isArray(plugins) && plugins.some(p => p.name === plugin.name);
+
+            // 发送安装请求到本地后端
+            console.log(`正在向本地后端发送${isReinstall ? '重新' : ''}安装请求...`);
+            const response = await fetch('/api/plugin_market/install', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                },
+                body: JSON.stringify({
+                    plugin_id: plugin.name,
+                    plugin_data: {
+                        name: plugin.name,
+                        description: plugin.description,
+                        author: plugin.author,
+                        version: plugin.version,
+                        github_url: cleanGithubUrl,
+                        config: {},
+                        requirements: []
+                    }
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error(`安装失败: HTTP ${response.status}`);
+            }
+
+            const result = await response.json();
+
+            if (result.success) {
+                // 更新按钮状态（如果存在）
+                if (button) {
+                    button.innerHTML = `<i class="bi bi-check-circle-fill me-1"></i>${isReinstall ? '已重新安装' : '已安装'}`;
+                    button.classList.remove('btn-primary');
+                    button.classList.add('btn-outline-success');
                 }
-            })
-        });
 
-        if (!response.ok) {
-            throw new Error(`安装失败: HTTP ${response.status}`);
-        }
+                // 显示成功提示
+                showToast(`插件 ${plugin.name} ${isReinstall ? '重新' : ''}安装成功`, 'success');
 
-        const result = await response.json();
+                // 重置按钮状态并重新显示重新安装按钮（如果存在）
+                if (button) {
+                    setTimeout(() => {
+                        button.innerHTML = `<i class="bi bi-arrow-repeat me-1"></i>重新安装`;
+                        button.classList.remove('btn-outline-success');
+                        button.classList.add('btn-outline-primary');
+                        button.disabled = false;
+                    }, 3000);
+                }
 
-        if (result.success) {
-            // 更新按钮状态
-            button.innerHTML = `<i class="bi bi-check-circle-fill me-1"></i>${isReinstall ? '已重新安装' : '已安装'}`;
-            button.classList.remove('btn-primary');
-            button.classList.add('btn-outline-success');
+                // 刷新本地插件列表
+                setTimeout(() => {
+                    loadPlugins();
+                }, 1000);
 
-            // 显示成功提示
-            showToast(`插件 ${plugin.name} ${isReinstall ? '重新' : ''}安装成功`, 'success');
+                // 解决Promise
+                resolve(result);
+            } else {
+                throw new Error(result.error || '安装失败');
+            }
+        } catch (error) {
+            console.error('安装插件失败:', error);
 
-            // 重置按钮状态并重新显示重新安装按钮
-            setTimeout(() => {
-                button.innerHTML = `<i class="bi bi-arrow-repeat me-1"></i>重新安装`;
-                button.classList.remove('btn-outline-success');
-                button.classList.add('btn-outline-primary');
+            // 恢复按钮状态（如果存在）
+            if (button) {
                 button.disabled = false;
-            }, 3000);
+                button.innerHTML = originalText;
+            }
 
-            // 刷新本地插件列表
-            setTimeout(() => {
-                loadPlugins();
-            }, 1000);
-        } else {
-            throw new Error(result.error || '安装失败');
+            // 显示错误提示
+            showToast(`安装失败: ${error.message}`, 'danger');
+
+            // 拒绝Promise
+            reject(error);
         }
-    } catch (error) {
-        console.error('安装插件失败:', error);
-
-        // 恢复按钮状态
-        button.disabled = false;
-        button.innerHTML = originalText;
-
-        // 显示错误提示
-        showToast(`安装失败: ${error.message}`, 'danger');
-    }
+    });
 }
 
 // 获取客户端唯一标识
