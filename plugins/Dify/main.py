@@ -804,8 +804,34 @@ class Dify(PluginBase):
         if content:
             if is_at or is_command:
                 query = content
-                for robot_name in self.robot_names:
-                    query = query.replace(f"@{robot_name}", "").strip()
+
+                # 检查是否以@开头，如果是，则移除@部分
+                if content.startswith('@'):
+                    # 先检查是否是@机器人
+                    at_bot_prefix = None
+                    for robot_name in self.robot_names:
+                        if content.startswith(f'@{robot_name}'):
+                            at_bot_prefix = f'@{robot_name}'
+                            break
+
+                    if at_bot_prefix:
+                        # 如果是@机器人，移除@机器人部分
+                        query = content[len(at_bot_prefix):].strip()
+                        logger.debug(f"移除@{at_bot_prefix}后的查询内容: {query}")
+                    else:
+                        # 如果不是@机器人，则尝试找空格
+                        space_index = content.find(' ')
+                        if space_index > 0:
+                            # 只保留空格后面的内容
+                            query = content[space_index+1:].strip()
+                            logger.debug(f"移除@前缀后的查询内容: {query}")
+                        else:
+                            # 如果没有空格，则整个内容都是@，将query设为空
+                            query = ""
+                else:
+                    # 如果不是以@开头，则尝试移除@机器人名称
+                    for robot_name in self.robot_names:
+                        query = query.replace(f"@{robot_name}", "").strip()
                 if command in self.commands:
                     query = query[len(command):].strip()
                 if query:
@@ -841,8 +867,34 @@ class Dify(PluginBase):
 
         content = message["Content"].strip()
         query = content
-        for robot_name in self.robot_names:
-            query = query.replace(f"@{robot_name}", "").strip()
+
+        # 检查是否以@开头，如果是，则移除@部分
+        if content.startswith('@'):
+            # 先检查是否是@机器人
+            at_bot_prefix = None
+            for robot_name in self.robot_names:
+                if content.startswith(f'@{robot_name}'):
+                    at_bot_prefix = f'@{robot_name}'
+                    break
+
+            if at_bot_prefix:
+                # 如果是@机器人，移除@机器人部分
+                query = content[len(at_bot_prefix):].strip()
+                logger.debug(f"移除@{at_bot_prefix}后的查询内容: {query}")
+            else:
+                # 如果不是@机器人，则尝试找空格
+                space_index = content.find(' ')
+                if space_index > 0:
+                    # 只保留空格后面的内容
+                    query = content[space_index+1:].strip()
+                    logger.debug(f"移除@前缀后的查询内容: {query}")
+                else:
+                    # 如果没有空格，则整个内容都是@，将query设为空
+                    query = ""
+        else:
+            # 如果不是以@开头，则尝试移除@机器人名称
+            for robot_name in self.robot_names:
+                query = query.replace(f"@{robot_name}", "").strip()
 
         group_id = message["FromWxid"]
         user_wxid = message["SenderWxid"]
@@ -932,11 +984,47 @@ class Dify(PluginBase):
             # 检查是否是@机器人
             is_at = self.is_at_message(message)
 
-            if is_at:
+            # 检查是否在引用消息中@了机器人
+            is_at_bot = False
+            if content.startswith('@'):
+                # 检查@的是否是机器人
+                for robot_name in self.robot_names:
+                    if content.startswith(f'@{robot_name}'):
+                        is_at_bot = True
+                        break
+
+            # 只有当用户@了机器人时，才处理引用消息
+            if is_at and is_at_bot:
                 # 处理@机器人的引用消息
                 query = content
-                for robot_name in self.robot_names:
-                    query = query.replace(f"@{robot_name}", "").strip()
+
+                # 检查是否以@开头，如果是，则移除@部分
+                if content.startswith('@'):
+                    # 先检查是否是@机器人
+                    at_bot_prefix = None
+                    for robot_name in self.robot_names:
+                        if content.startswith(f'@{robot_name}'):
+                            at_bot_prefix = f'@{robot_name}'
+                            break
+
+                    if at_bot_prefix:
+                        # 如果是@机器人，移除@机器人部分
+                        query = content[len(at_bot_prefix):].strip()
+                        logger.debug(f"移除@{at_bot_prefix}后的查询内容: {query}")
+                    else:
+                        # 如果不是@机器人，则尝试找空格
+                        space_index = content.find(' ')
+                        if space_index > 0:
+                            # 只保留空格后面的内容
+                            query = content[space_index+1:].strip()
+                            logger.debug(f"移除@前缀后的查询内容: {query}")
+                        else:
+                            # 如果没有空格，则整个内容都是@，将query设为空
+                            query = ""
+                else:
+                    # 如果不是以@开头，则尝试移除@机器人名称
+                    for robot_name in self.robot_names:
+                        query = query.replace(f"@{robot_name}", "").strip()
 
                 # 如果没有内容，则使用引用的内容
                 if not query:
@@ -1108,11 +1196,15 @@ class Dify(PluginBase):
         msg_type = message.get("MsgType")
         logger.debug(f"消息类型: {msg_type}, 是否有Quote字段: {'Quote' in message}")
 
-        # 如果消息内容以@开头，这是一个强烈的信号，表明用户@了机器人
+        # 如果消息内容以@开头，这是一个强烈的信号，表明用户@了某人
         if content.startswith('@'):
             logger.debug(f"消息内容以@开头: {content[:20]}")
-            # 直接返回True，不需要进一步检查
-            return True
+            # 检查@的是否是机器人
+            for robot_name in self.robot_names:
+                if content.startswith(f'@{robot_name}'):
+                    logger.debug(f"消息内容以@{robot_name}开头")
+                    return True
+            # 如果@的不是机器人，继续检查其他条件
 
         # 检查普通消息中的@
         for robot_name in self.robot_names:
