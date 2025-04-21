@@ -95,33 +95,26 @@ class AutoSummary(PluginBase):
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
             }
-            # 设置超时参数，但不使用上下文管理器
-            timeout_seconds = 30
+            # 设置超时参数
+            timeout = aiohttp.ClientTimeout(total=30)  # 30秒总超时
 
-            # 获取原始URL并处理重定向
+            # 先检查是否有重定向，获取最终URL
+            final_url = url
             try:
-                async with self.http_session.get(url, headers=headers, allow_redirects=True, timeout=timeout_seconds) as response:
-                    if response.status != 200:
-                        logger.error(f"获取初始URL失败: {response.status}, URL: {url}")
-                        return None
-                    final_url = str(response.url)
-                    logger.info(f"重定向后的URL: {final_url}")
+                # 只发送HEAD请求来检查重定向，不获取实际内容
+                async with self.http_session.head(url, headers=headers, allow_redirects=True, timeout=timeout) as head_response:
+                    if head_response.status == 200:
+                        final_url = str(head_response.url)
+                        if final_url != url:
+                            logger.info(f"检测到重定向: {url} -> {final_url}")
+            except Exception as e:
+                logger.warning(f"检查重定向失败: {e}, 使用原始URL")
 
-                    # 尝试直接获取内容
-                    try:
-                        content = await response.text()
-                        if content and len(content) > 500:  # 确保内容有足够长度
-                            logger.info(f"直接从URL获取内容成功: {url}, 内容长度: {len(content)}")
-                            return content
-                    except Exception as e:
-                        logger.warning(f"直接获取内容失败: {e}, 尝试使用Jina AI")
-            except asyncio.TimeoutError:
-                logger.warning(f"获取URL超时: {url}, 尝试使用Jina AI")
-
-            # 如果直接获取失败或内容太短，尝试使用Jina AI
+            # 使用 Jina AI 获取内容（使用最终URL）
+            logger.info(f"使用 Jina AI 获取内容: {final_url}")
             try:
-                jina_url = f"https://r.jina.ai/{url}"
-                async with self.http_session.get(jina_url, headers=headers, timeout=timeout_seconds) as jina_response:
+                jina_url = f"https://r.jina.ai/{final_url}"
+                async with self.http_session.get(jina_url, headers=headers, timeout=timeout) as jina_response:
                     if jina_response.status == 200:
                         content = await jina_response.text()
                         logger.info(f"从 Jina AI 获取内容成功: {jina_url}, 内容长度: {len(content)}")
@@ -131,8 +124,23 @@ class AutoSummary(PluginBase):
             except Exception as e:
                 logger.error(f"使用Jina AI获取内容失败: {e}")
 
+            # 如果 Jina AI 失败，尝试直接获取
+            logger.info(f"Jina AI 失败，尝试直接获取: {final_url}")
+            try:
+                async with self.http_session.get(final_url, headers=headers, timeout=timeout) as response:
+                    if response.status != 200:
+                        logger.error(f"直接获取URL失败: {response.status}, URL: {final_url}")
+                        return None
+
+                    content = await response.text()
+                    if content and len(content) > 500:  # 确保内容有足够长度
+                        logger.info(f"直接从URL获取内容成功: {final_url}, 内容长度: {len(content)}")
+                        return content
+            except Exception as e:
+                logger.warning(f"直接获取内容失败: {e}")
+
             # 尝试使用备用方法直接获取
-            return await self._fetch_url_content_direct(url)
+            return await self._fetch_url_content_direct(final_url)
         except asyncio.TimeoutError:
             logger.error(f"获取URL内容超时: URL: {url}")
             return None
@@ -144,19 +152,32 @@ class AutoSummary(PluginBase):
         """直接获取URL内容的备用方法"""
         try:
             headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+                "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+                "Cache-Control": "no-cache",
+                "Pragma": "no-cache"
             }
-            timeout_seconds = 30
+            timeout = aiohttp.ClientTimeout(total=30)  # 30秒总超时
 
-            async with self.http_session.get(url, headers=headers, timeout=timeout_seconds) as response:
+            logger.info(f"备用方法尝试获取: {url}")
+            async with self.http_session.get(url, headers=headers, timeout=timeout, allow_redirects=True) as response:
                 if response.status != 200:
+                    logger.warning(f"备用方法获取失败: {response.status}, URL: {url}")
                     return None
 
                 content_type = response.headers.get('Content-Type', '')
-                if 'text/html' in content_type or 'application/json' in content_type:
+                logger.info(f"内容类型: {content_type}")
+
+                # 尝试获取文本内容，即使不是标准的HTML或JSON
+                try:
                     content = await response.text()
-                    logger.info(f"备用方法获取内容成功: {url}, 内容长度: {len(content)}")
-                    return content
+                    if content and len(content) > 500:  # 确保内容有足够长度
+                        logger.info(f"备用方法获取内容成功: {url}, 内容长度: {len(content)}")
+                        return content
+                except Exception as text_error:
+                    logger.warning(f"获取文本内容失败: {text_error}")
+
                 return None
         except Exception as e:
             logger.error(f"备用方法获取URL内容失败: {e}")

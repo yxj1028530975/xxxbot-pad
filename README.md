@@ -17,7 +17,7 @@ XXXBot 是一个基于微信的智能机器人系统，通过整合多种 API �
 
 <table>
   <tr>
-    <td width="65%">
+    <td width="50%">
       <h3>💬 加入XXXBot交流群</h3>
       <p>扫描右侧的二维码加入官方交流群，获取：</p>
       <ul>
@@ -27,14 +27,12 @@ XXXBot 是一个基于微信的智能机器人系统，通过整合多种 API �
         <li>📝 <strong>插件开发</strong>和定制化帮助</li>
       </ul>
     </td>
-    <td width="35%" align="center">
-      <img src="https://github.com/user-attachments/assets/e1041478-02d5-44b1-aa09-23d1d5f2710d" alt="XXXBot微信群" width="220">
+    <td width="25%" align="center">
+      <img src="https://github.com/user-attachments/assets/da2649f7-7338-4e3c-92fe-cfcbd1be989b" alt="XXXBot微信群" width="220">
       <p><strong>XXXBot交流群</strong></p>
     </td>
-    </td>
-    <td width="35%" align="center">
-      <img src="![赞助](https://github.com/user-attachments/assets/4b585ad5-b819-4945-9a3d-06a98958f8d3)
-" alt="感谢赞助" width="220">
+    <td width="25%" align="center">
+      <img src="https://github.com/user-attachments/assets/2dde3b46-85a1-4f22-8a54-3928ef59b85f" alt="感谢赞助" width="220">
       <p><strong>感谢赞助</strong></p>
     </td>
   </tr>

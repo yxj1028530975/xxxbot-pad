@@ -113,15 +113,35 @@ class XYBot:
                     api_base = f"http://{self.bot.ip}:{self.bot.port}"
 
                 # 确定API路径前缀
-                api_prefix = "/api"
+                api_prefix = ""
+
+                # 先检查是否有显式设置的前缀
                 if hasattr(self.bot, 'api_prefix'):
                     api_prefix = self.bot.api_prefix
                 elif hasattr(self.bot, '_api_prefix'):
                     api_prefix = self.bot._api_prefix
 
-                # 如果是849协议，使用/VXAPI前缀
-                if api_prefix == "" and hasattr(self.bot, 'ip') and self.bot.ip == "127.0.0.1" and self.bot.port == 9011:
-                    api_prefix = "/VXAPI"
+                # 如果没有显式设置，则根据协议版本确定
+                if api_prefix == "":
+                    # 读取协议版本配置
+                    try:
+                        import tomllib
+                        with open("main_config.toml", "rb") as f:
+                            config = tomllib.load(f)
+                            protocol_version = config.get("Protocol", {}).get("version", "849")
+
+                            # 根据协议版本选择前缀
+                            if protocol_version == "849":
+                                api_prefix = "/VXAPI"
+                                logger.info(f"使用849协议前缀: {api_prefix}")
+                            else:  # 855 或 ipad
+                                api_prefix = "/api"
+                                logger.info(f"使用{protocol_version}协议前缀: {api_prefix}")
+                    except Exception as e:
+                        logger.warning(f"读取协议版本失败，使用默认前缀: {e}")
+                        # 默认使用 849 的前缀
+                        api_prefix = "/VXAPI"
+                        logger.info(f"使用默认协议前缀: {api_prefix}")
 
                 # 获取当前登录的wxid
                 wxid = ""
