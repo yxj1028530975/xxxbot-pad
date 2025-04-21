@@ -1,6 +1,7 @@
 import tomllib
 import xml.etree.ElementTree as ET
 from datetime import datetime
+import os
 
 from loguru import logger
 
@@ -25,6 +26,14 @@ class GroupWelcome(PluginBase):
         self.enable = config["enable"]
         self.welcome_message = config["welcome-message"]
         self.url = config["url"]
+
+        # PDF文件路径
+        self.pdf_path = os.path.join("plugins", "GroupWelcome", "temp", "xxxbot项目说明.pdf")
+        # 检查PDF文件是否存在
+        if os.path.exists(self.pdf_path):
+            logger.info(f"找到项目说明PDF文件: {self.pdf_path}")
+        else:
+            logger.warning(f"项目说明PDF文件不存在: {self.pdf_path}")
 
     @on_system_message
     async def group_welcome(self, bot: WechatAPIClient, message: dict):
@@ -163,6 +172,9 @@ class GroupWelcome(PluginBase):
                                             url=self.url,
                                             thumb_url=avatar_url
                                             )
+
+                    # 发送项目说明PDF文件
+                    await self.send_pdf_file(bot, message["FromWxid"])
                 except Exception as e:
                     logger.error(f"获取群成员信息失败: {e}")
                     # 如果获取失败，使用默认头像发送欢迎消息
@@ -172,6 +184,9 @@ class GroupWelcome(PluginBase):
                                             url=self.url,
                                             thumb_url=""
                                             )
+
+                    # 发送项目说明PDF文件
+                    await self.send_pdf_file(bot, message["FromWxid"])
 
     @staticmethod
     def _parse_member_info(root: ET.Element, link_name: str = "names") -> list[dict]:
@@ -200,3 +215,55 @@ class GroupWelcome(PluginBase):
             logger.warning(f"解析新成员信息失败: {e}")
 
         return new_members
+
+    async def send_pdf_file(self, bot: WechatAPIClient, to_wxid: str):
+        """发送项目说明PDF文件"""
+        try:
+            # 检查文件是否存在
+            if not os.path.exists(self.pdf_path):
+                logger.error(f"项目说明PDF文件不存在: {self.pdf_path}")
+                return
+
+            # 读取文件内容
+            with open(self.pdf_path, "rb") as f:
+                file_data = f.read()
+
+            # 获取文件名和扩展名
+            file_name = os.path.basename(self.pdf_path)
+            file_extension = os.path.splitext(file_name)[1][1:]  # 去掉点号
+
+            # 上传文件
+            logger.info(f"开始上传项目说明PDF文件: {file_name}")
+            file_info = await bot.upload_file(file_data)
+            logger.info(f"项目说明PDF文件上传成功: {file_info}")
+
+            # 从文件信息中提取必要的字段
+            media_id = file_info.get('mediaId')
+            total_len = file_info.get('totalLen', len(file_data))
+
+            logger.info(f"文件信息: mediaId={media_id}, totalLen={total_len}")
+
+            # 构造XML消息
+            xml = f"""<appmsg appid="" sdkver="0">
+    <title>{file_name}</title>
+    <des></des>
+    <action></action>
+    <type>6</type>
+    <showtype>0</showtype>
+    <content></content>
+    <url></url>
+    <appattach>
+        <totallen>{total_len}</totallen>
+        <attachid>{media_id}</attachid>
+        <fileext>{file_extension}</fileext>
+    </appattach>
+    <md5></md5>
+</appmsg>"""
+
+            # 发送文件消息
+            logger.info(f"开始发送项目说明PDF文件: {file_name}")
+            result = await bot._send_cdn_file_msg(to_wxid, xml)
+            logger.info(f"项目说明PDF文件发送结果: {result}")
+
+        except Exception as e:
+            logger.error(f"发送项目说明PDF文件失败: {e}")

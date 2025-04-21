@@ -826,8 +826,16 @@ class Dify(PluginBase):
                             query = content[space_index+1:].strip()
                             logger.debug(f"移除@前缀后的查询内容: {query}")
                         else:
-                            # 如果没有空格，则整个内容都是@，将query设为空
-                            query = ""
+                            # 如果没有空格，尝试提取@后面的内容
+                            # 找到第一个非空格字符的位置
+                            for i in range(1, len(content)):
+                                if content[i] != '@' and content[i] != ' ':
+                                    query = content[i:].strip()
+                                    logger.debug(f"提取@后面的内容: {query}")
+                                    break
+                            else:
+                                # 如果整个内容都是@，将query设为空
+                                query = ""
                 else:
                     # 如果不是以@开头，则尝试移除@机器人名称
                     for robot_name in self.robot_names:
@@ -889,8 +897,16 @@ class Dify(PluginBase):
                     query = content[space_index+1:].strip()
                     logger.debug(f"移除@前缀后的查询内容: {query}")
                 else:
-                    # 如果没有空格，则整个内容都是@，将query设为空
-                    query = ""
+                    # 如果没有空格，尝试提取@后面的内容
+                    # 找到第一个非空格字符的位置
+                    for i in range(1, len(content)):
+                        if content[i] != '@' and content[i] != ' ':
+                            query = content[i:].strip()
+                            logger.debug(f"提取@后面的内容: {query}")
+                            break
+                    else:
+                        # 如果整个内容都是@，将query设为空
+                        query = ""
         else:
             # 如果不是以@开头，则尝试移除@机器人名称
             for robot_name in self.robot_names:
@@ -1019,8 +1035,16 @@ class Dify(PluginBase):
                             query = content[space_index+1:].strip()
                             logger.debug(f"移除@前缀后的查询内容: {query}")
                         else:
-                            # 如果没有空格，则整个内容都是@，将query设为空
-                            query = ""
+                            # 如果没有空格，尝试提取@后面的内容
+                            # 找到第一个非空格字符的位置
+                            for i in range(1, len(content)):
+                                if content[i] != '@' and content[i] != ' ':
+                                    query = content[i:].strip()
+                                    logger.debug(f"提取@后面的内容: {query}")
+                                    break
+                            else:
+                                # 如果整个内容都是@，将query设为空
+                                query = ""
                 else:
                     # 如果不是以@开头，则尝试移除@机器人名称
                     for robot_name in self.robot_names:
@@ -1387,7 +1411,11 @@ class Dify(PluginBase):
                         new_con_id = api_response.get("data", {}).get("conversation_id", "")
                         if new_con_id and new_con_id != conversation_id:
                             self.db.save_llm_thread_id(message["FromWxid"], new_con_id, "dify")
-                        logger.debug(f"API代理返回: {ai_resp}")
+
+                        # 过滤掉思考标签
+                        think_pattern = r'<think>.*?</think>'
+                        ai_resp = re.sub(think_pattern, '', ai_resp, flags=re.DOTALL)
+                        logger.debug(f"API代理返回(过滤思考标签后): {ai_resp[:100]}...")
 
                         if ai_resp:
                             await self.dify_handle_text(bot, message, ai_resp, model)
@@ -1425,6 +1453,11 @@ class Dify(PluginBase):
                                     ai_resp += resp_json.get("answer", "")
                                 elif event == "message_replace":
                                     ai_resp = resp_json.get("answer", "")
+                                elif event == "message_end":
+                                    # 在消息结束时过滤掉思考标签
+                                    think_pattern = r'<think>.*?</think>'
+                                    ai_resp = re.sub(think_pattern, '', ai_resp, flags=re.DOTALL)
+                                    logger.debug(f"消息结束时过滤思考标签")
                                 elif event == "message_file":
                                     file_url = resp_json.get("url", "")
                                     await self.dify_handle_image(bot, message, file_url, model_config=model)
@@ -1440,7 +1473,11 @@ class Dify(PluginBase):
                             if new_con_id and new_con_id != conversation_id:
                                 self.db.save_llm_thread_id(message["FromWxid"], new_con_id, "dify")
                             ai_resp = ai_resp.rstrip()
-                            logger.debug(f"Dify响应: {ai_resp}")
+
+                            # 最后再次过滤思考标签，确保完全移除
+                            think_pattern = r'<think>.*?</think>'
+                            ai_resp = re.sub(think_pattern, '', ai_resp, flags=re.DOTALL)
+                            logger.debug(f"Dify响应(过滤思考标签后): {ai_resp[:100]}...")
                         elif resp.status == 404:
                             logger.warning("会话ID不存在，重置会话ID并重试")
                             self.db.save_llm_thread_id(message["FromWxid"], "", "dify")
@@ -1689,6 +1726,11 @@ class Dify(PluginBase):
     async def dify_handle_text(self, bot: WechatAPIClient, message: dict, text: str, model_config=None):
         # 使用传入的model_config，如果没有则使用默认模型
         model = model_config or self.current_model
+
+        # 先过滤掉<think>...</think>标签中的内容
+        think_pattern = r'<think>.*?</think>'
+        text = re.sub(think_pattern, '', text, flags=re.DOTALL)
+        logger.debug(f"过滤思考标签后的文本: {text[:100]}...")
 
         # 匹配Dify返回的图片引用格式
         image_pattern = r'\[(.*?)\]\((.*?)\)'
