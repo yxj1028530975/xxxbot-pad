@@ -1,6 +1,6 @@
 [OpenAIAPI]
 enable = true                           # 是否启用此功能
-api-key = "sk-cxV3YnihIzGylcsTAc856289145a4617Bb0351F35289D6A7"                            # 后端API密钥，如果后端需要
+api-key = ""                            # 后端API密钥，如果后端需要
 base-url = "https://api.openai.com/v1"  # 后端API地址，可以是OpenAI或兼容的API服务
 
 # 模型配置
