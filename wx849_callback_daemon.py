@@ -1,0 +1,352 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+消息回调守护进程 - 持续监控原始框架消息并转发给DOW框架
+将此脚本放在原始框架的目录下，在启动时运行
+"""
+
+import os
+import sys
+import json
+import time
+import logging
+import traceback
+import requests
+import threading
+from datetime import datetime
+import glob
+import re  # 添加正则表达式模块
+
+# 配置日志
+log_dir = "logs"
+if not os.path.exists(log_dir):
+    os.makedirs(log_dir)
+log_file = os.path.join(log_dir, f"wx849_callback_daemon_{datetime.now().strftime('%Y%m%d')}.log")
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(log_file, encoding='utf-8'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# 回调配置
+DOW_CALLBACK_URL = "http://127.0.0.1:8088/wx849/callback"  # DOW框架的回调URL
+DOW_CALLBACK_KEY = ""  # 从DOW框架启动日志中获取，或在配置中设置
+
+# 如果存在配置文件，从中读取配置
+config_file = "wx849_callback_config.json"
+if os.path.exists(config_file):
+    try:
+        with open(config_file, "r", encoding="utf-8") as f:
+            config = json.load(f)
+            DOW_CALLBACK_URL = config.get("callback_url", DOW_CALLBACK_URL)
+            DOW_CALLBACK_KEY = config.get("callback_key", DOW_CALLBACK_KEY)
+            logger.info(f"已从配置文件加载回调设置: URL={DOW_CALLBACK_URL}")
+    except Exception as e:
+        logger.error(f"读取配置文件失败: {e}")
+
+# 消息队列
+message_queue = []
+message_queue_lock = threading.Lock()
+
+# 用户昵称缓存字典
+user_nickname_cache = {}
+
+class MessageMonitor:
+    def __init__(self):
+        self.is_running = True
+        self.last_check_time = 0
+        
+        # 消息文件路径
+        self.message_file_paths = [
+            "logs/XYBot_*.log",  # 匹配当前日志文件
+            "logs/message.log",
+            "logs/message_current.log", 
+            "logs/wechat_message.log"
+        ]
+        
+        # 记录每个文件的上次读取位置
+        self.file_positions = {}
+        # 扩展文件路径模式
+        self.actual_file_paths = []
+        for pattern in self.message_file_paths:
+            matching_files = glob.glob(pattern)
+            for file_path in matching_files:
+                if os.path.exists(file_path) and file_path not in self.actual_file_paths:
+                    self.actual_file_paths.append(file_path)
+                    self.file_positions[file_path] = os.path.getsize(file_path)
+        
+        logger.info(f"监控的日志文件: {self.actual_file_paths}")
+    
+    def start(self):
+        """启动监控"""
+        logger.info("启动消息监控...")
+        
+        # 启动消息处理线程
+        processor_thread = threading.Thread(target=self.process_messages)
+        processor_thread.daemon = True
+        processor_thread.start()
+        
+        # 主循环 - 监控消息文件
+        try:
+            while self.is_running:
+                self.check_message_files()
+                time.sleep(0.5)  # 每0.5秒检查一次
+        except KeyboardInterrupt:
+            logger.info("收到中断信号，正在停止...")
+            self.is_running = False
+        except Exception as e:
+            logger.error(f"监控异常: {e}")
+            logger.error(traceback.format_exc())
+            self.is_running = False
+    
+    def check_message_files(self):
+        """检查消息文件变化"""
+        for file_path in self.actual_file_paths:
+            if not os.path.exists(file_path):
+                continue
+            
+            try:
+                # 获取当前文件大小
+                current_size = os.path.getsize(file_path)
+                
+                # 如果是新文件或文件被重置
+                if file_path not in self.file_positions or current_size < self.file_positions[file_path]:
+                    self.file_positions[file_path] = 0
+                
+                # 如果文件有新内容
+                if current_size > self.file_positions[file_path]:
+                    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                        # 移动到上次读取的位置
+                        f.seek(self.file_positions[file_path])
+                        
+                        # 读取新增内容
+                        new_content = f.read()
+                        
+                        # 更新位置
+                        self.file_positions[file_path] = current_size
+                        
+                        # 处理新内容
+                        self.parse_new_content(new_content)
+            except Exception as e:
+                logger.error(f"读取文件 {file_path} 失败: {e}")
+    
+    def parse_new_content(self, content):
+        """解析日志内容，提取消息"""
+        # 按行分割
+        lines = content.split('\n')
+        
+        for line in lines:
+            if not line.strip():
+                continue
+            
+            try:
+                # 检查昵称更新行
+                nickname_pattern = r"更新用户昵称缓存: (wxid_\w+) -> (.+)"
+                nickname_match = re.search(nickname_pattern, line)
+                if nickname_match:
+                    wxid = nickname_match.group(1)
+                    nickname = nickname_match.group(2)
+                    user_nickname_cache[wxid] = nickname
+                    logger.info(f"缓存用户昵称: {wxid} -> {nickname}")
+                    continue
+                
+                # 匹配更多可能的消息模式，特别是原始框架特定的格式
+                if ("收到文本消息" in line or 
+                    "收到消息" in line or 
+                    "收到图片消息" in line or 
+                    "收到语音消息" in line or 
+                    "MsgId" in line):
+                    
+                    logger.info(f"发现可能的消息行: {line[:100]}...")
+                    
+                    # 尝试提取消息数据
+                    message_data = self.extract_message_from_line(line)
+                    
+                    if message_data:
+                        # 使用锁保护队列操作
+                        with message_queue_lock:
+                            message_queue.append(message_data)
+                            logger.info(f"添加消息到队列，当前队列长度: {len(message_queue)}")
+            except Exception as e:
+                logger.error(f"解析行异常: {e}, 行内容: {line[:100]}...")
+    
+    def extract_message_from_line(self, line):
+        """从日志行提取消息数据"""
+        try:
+            # 尝试提取JSON格式的消息
+            
+            # 尝试找到包含消息信息的JSON对象
+            json_pattern = re.compile(r'({[^{]*"MsgId"[^}]*}|{[^{]*"msg_id"[^}]*}|{[^{]*"msgid"[^}]*})')
+            json_match = json_pattern.search(line)
+            
+            if json_match:
+                json_str = json_match.group(1)
+                try:
+                    # 尝试解析JSON
+                    msg_data = json.loads(json_str)
+                    
+                    # 确保消息类型正确设置
+                    if 'MsgType' not in msg_data or msg_data['MsgType'] == 0:
+                        # 默认将未知类型设置为文本消息类型(1)
+                        msg_data['MsgType'] = 1
+                    
+                    # 如果消息中有发送者ID但没有昵称，尝试从缓存添加
+                    sender_wxid = None
+                    if 'SenderWxid' in msg_data and msg_data['SenderWxid']:
+                        sender_wxid = msg_data['SenderWxid']
+                    elif 'SenderId' in msg_data and msg_data['SenderId']:
+                        sender_wxid = msg_data['SenderId']
+                    
+                    # 添加昵称信息
+                    if sender_wxid and sender_wxid in user_nickname_cache:
+                        msg_data['SenderNickName'] = user_nickname_cache[sender_wxid]
+                        logger.info(f"为消息添加发送者昵称: {sender_wxid} -> {user_nickname_cache[sender_wxid]}")
+                    
+                    # 保存原始行以便调试
+                    msg_data['RawLogLine'] = line
+                    
+                    logger.info(f"成功提取JSON消息数据: {json.dumps(msg_data, ensure_ascii=False)[:100]}...")
+                    return msg_data
+                except json.JSONDecodeError as e:
+                    logger.error(f"JSON解析失败: {e}, 内容: {json_str[:100]}")
+            
+            # 如果不是JSON格式，尝试从格式化的日志中提取信息
+            msg_pattern = re.compile(r'消息ID:(\d+).*?来自:(.*?)[\s\:].*?发送人:(.*?)[\s\:].*?内容:(.*?)(?=$|\n)')
+            msg_match = msg_pattern.search(line)
+            
+            if msg_match:
+                msg_id, from_user, sender, content = msg_match.groups()
+                msg_data = {
+                    "MsgId": int(msg_id),
+                    "FromUserName": {"string": from_user},
+                    "MsgType": 1,  # 默认设置为文本消息类型
+                    "Content": content,
+                    "FromWxid": from_user,
+                    "SenderWxid": sender,
+                    "RawLogLine": line  # 保存原始行
+                }
+                
+                # 尝试从缓存添加发送者昵称
+                if sender in user_nickname_cache:
+                    msg_data["SenderNickName"] = user_nickname_cache[sender]
+                    logger.info(f"为消息添加发送者昵称: {sender} -> {user_nickname_cache[sender]}")
+                
+                # 检查内容中是否包含昵称信息 (格式如: "xxx : 消息内容")
+                if "PushContent" not in msg_data and content:
+                    push_content_match = re.match(r"(.+?)\s*:\s*(.+)", content)
+                    if push_content_match:
+                        nickname, real_content = push_content_match.groups()
+                        msg_data["PushContent"] = f"{nickname} : {real_content}"
+                        # 可能的情况下更新昵称缓存
+                        if sender and sender not in user_nickname_cache:
+                            user_nickname_cache[sender] = nickname
+                            logger.info(f"从消息内容更新昵称缓存: {sender} -> {nickname}")
+                
+                logger.info(f"成功从日志提取消息数据: ID={msg_id}, 发送者={sender}, 类型=1(文本)")
+                return msg_data
+            
+            # 尝试匹配新格式的日志行 (包含更多消息内容)
+            new_pattern = re.compile(r'收到文本消息: chat_id=(.*?), content=(.*?),')
+            new_match = new_pattern.search(line)
+            if new_match:
+                chat_id, content = new_match.groups()
+                # 只有在队列为空时才添加，避免重复
+                if not message_queue:
+                    msg_data = {
+                        "MsgId": int(time.time() * 1000),  # 生成一个临时ID
+                        "FromUserName": {"string": chat_id},
+                        "MsgType": 1,
+                        "Content": content,
+                        "FromWxid": chat_id,
+                        "RawLogLine": line  # 保存原始行
+                    }
+                    
+                    # 从内容中提取发送者信息 (格式如: "xxx : 消息内容")
+                    if content:
+                        push_content_match = re.match(r"(.+?)\s*:\s*(.+)", content)
+                        if push_content_match:
+                            nickname, real_content = push_content_match.groups()
+                            msg_data["Content"] = real_content
+                            msg_data["PushContent"] = f"{nickname} : {real_content}"
+                            # 这里无法确定wxid，所以不更新昵称缓存
+                    
+                    logger.info(f"成功从新格式日志提取消息: chat_id={chat_id}, content={content[:30]}...")
+                    return msg_data
+            
+            return None
+        except Exception as e:
+            logger.error(f"提取消息异常: {e}")
+            logger.error(traceback.format_exc())
+            return None
+    
+    def process_messages(self):
+        """处理消息队列"""
+        logger.info("启动消息处理线程")
+        
+        while self.is_running:
+            try:
+                # 检查队列是否有消息
+                if message_queue:
+                    # 使用锁保护队列操作
+                    with message_queue_lock:
+                        # 获取最早的消息
+                        if message_queue:
+                            message = message_queue.pop(0)
+                            logger.debug(f"从队列取出消息，剩余: {len(message_queue)}")
+                        else:
+                            message = None
+                    
+                    # 处理消息
+                    if message:
+                        self.send_to_dow(message)
+                
+                # 短暂休眠避免CPU过载
+                time.sleep(0.1)
+            except Exception as e:
+                logger.error(f"处理消息异常: {e}")
+                logger.error(traceback.format_exc())
+    
+    def send_to_dow(self, message_data):
+        """将消息发送给DOW框架"""
+        try:
+            headers = {
+                "Content-Type": "application/json"
+            }
+            
+            # 只有当有密钥时才添加Authorization头
+            if DOW_CALLBACK_KEY:
+                headers["Authorization"] = f"Bearer {DOW_CALLBACK_KEY}"
+            
+            # 发送完整消息数据，不过滤任何字段
+            logger.debug(f"发送完整消息数据: {json.dumps(message_data, ensure_ascii=False)[:200]}...")
+            
+            # 发送POST请求
+            response = requests.post(DOW_CALLBACK_URL, 
+                                   json=message_data, 
+                                   headers=headers, 
+                                   timeout=5)
+            
+            if response.status_code == 200:
+                result = response.json()
+                if result.get("success", False):
+                    logger.info("消息转发成功")
+                else:
+                    logger.error(f"DOW框架处理失败: {result.get('message', '未知错误')}")
+            else:
+                logger.error(f"发送失败，状态码: {response.status_code}, 内容: {response.text}")
+        except Exception as e:
+            logger.error(f"发送消息异常: {e}")
+            logger.error(traceback.format_exc())
+
+if __name__ == "__main__":
+    logger.info("======== 启动微信消息回调守护进程 ========")
+    logger.info(f"回调URL: {DOW_CALLBACK_URL}")
+    
+    # 创建并启动监控器
+    monitor = MessageMonitor()
+    monitor.start() 

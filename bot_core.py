@@ -130,8 +130,10 @@ async def bot_core():
     # 启动WechatAPI服务
     # server = WechatAPI.WechatAPIServer()
     api_config = config.get("WechatAPIServer", {})
+    api_host = api_config.get("host", "127.0.0.1")  # 获取自定义的API主机地址
     redis_host = api_config.get("redis-host", "127.0.0.1")
     redis_port = api_config.get("redis-port", 6379)
+    logger.debug("WechatAPI 服务器地址: {}", api_host)
     logger.debug("Redis 主机地址: {}:{}", redis_host, redis_port)
     # server.start(port=api_config.get("port", 9000),
     #              mode=api_config.get("mode", "release"),
@@ -163,15 +165,15 @@ async def bot_core():
                 from WechatAPI.Client2 import WechatAPIClient as WechatAPIClient2
 
                 # 使用Client2
-                bot = WechatAPIClient2("127.0.0.1", api_config.get("port", 9000))
+                bot = WechatAPIClient2(api_host, api_config.get("port", 9000))
                 logger.success("成功加载855协议客户端")
             else:
                 logger.warning("WechatAPI Client2目录不存在，回退使用默认客户端")
-                bot = WechatAPI.WechatAPIClient("127.0.0.1", api_config.get("port", 9000))
+                bot = WechatAPI.WechatAPIClient(api_host, api_config.get("port", 9000))
         except Exception as e:
             logger.error(f"加载855协议客户端失败: {e}")
             logger.warning("回退使用默认客户端")
-            bot = WechatAPI.WechatAPIClient("127.0.0.1", api_config.get("port", 9000))
+            bot = WechatAPI.WechatAPIClient(api_host, api_config.get("port", 9000))
     elif protocol_version == "ipad":
         # iPad版本使用Client3
         try:
@@ -190,18 +192,18 @@ async def bot_core():
                 from WechatAPI.Client3 import WechatAPIClient as WechatAPIClient3
 
                 # 使用Client3
-                bot = WechatAPIClient3("127.0.0.1", api_config.get("port", 9000))
+                bot = WechatAPIClient3(api_host, api_config.get("port", 9000))
                 logger.success("成功加载iPad协议客户端")
             else:
                 logger.warning("WechatAPI Client3目录不存在，回退使用默认客户端")
-                bot = WechatAPI.WechatAPIClient("127.0.0.1", api_config.get("port", 9000))
+                bot = WechatAPI.WechatAPIClient(api_host, api_config.get("port", 9000))
         except Exception as e:
             logger.error(f"加载iPad协议客户端失败: {e}")
             logger.warning("回退使用默认客户端")
-            bot = WechatAPI.WechatAPIClient("127.0.0.1", api_config.get("port", 9000))
+            bot = WechatAPI.WechatAPIClient(api_host, api_config.get("port", 9000))
     else:
         # 849版本使用默认Client
-        bot = WechatAPI.WechatAPIClient("127.0.0.1", api_config.get("port", 9000))
+        bot = WechatAPI.WechatAPIClient(api_host, api_config.get("port", 9000))
         logger.info("使用849协议客户端")
 
     # 设置客户端属性
@@ -280,7 +282,7 @@ async def bot_core():
                                     api_base = "/api"
                                 else:
                                     api_base = "/VXAPI"
-                                api_url = f'http://127.0.0.1:{api_config.get("port", 9000)}{api_base}/Login/Awaken'
+                                api_url = f'http://{api_host}:{api_config.get("port", 9000)}{api_base}/Login/Awaken'
 
                                 # 准备请求参数
                                 json_param = {
