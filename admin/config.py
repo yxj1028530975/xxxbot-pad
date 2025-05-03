@@ -67,7 +67,7 @@ LOG_CONFIG = {
 
 # 插件市场配置
 PLUGIN_MARKET_CONFIG = {
-    "base_url": "https://xianan.xin:1562/api",
+    "base_url": "http://xianan.xin:1562/api",
     "cache_dir": "_cache",
     "temp_dir": "_temp",
     "sync_interval": 3600

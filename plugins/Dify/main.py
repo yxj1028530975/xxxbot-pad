@@ -1498,14 +1498,25 @@ class Dify(PluginBase):
             logger.error(f"Dify API 调用失败: {e}")
             await self.hendle_exceptions(bot, message, model_config=model)
 
-    async def download_file(self, url: str) -> tuple[bytes, str]:
+    async def download_file(self, url: str) -> bytes:
         """
-        下载文件并返回文件内容和MIME类型
+        下载文件并返回文件内容
         """
-        async with aiohttp.ClientSession(proxy=self.http_proxy) as session:
-            async with session.get(url) as resp:
-                content_type = resp.headers.get('Content-Type', '')
-                return await resp.read(), content_type
+        try:
+            logger.info(f"开始下载文件: {url}")
+            async with aiohttp.ClientSession(proxy=self.http_proxy) as session:
+                async with session.get(url) as resp:
+                    if resp.status == 200:
+                        content = await resp.read()
+                        logger.info(f"文件下载成功，大小: {len(content)} 字节")
+                        return content
+                    else:
+                        logger.error(f"文件下载失败: HTTP {resp.status}")
+                        return None
+        except Exception as e:
+            logger.error(f"下载文件时发生错误: {e}")
+            logger.error(traceback.format_exc())
+            return None
 
     async def upload_file_to_dify(self, file_content: bytes, file_name: str, mime_type: str, user: str, model_config=None) -> Optional[dict]:
         """
@@ -1778,16 +1789,37 @@ class Dify(PluginBase):
         links = re.findall(pattern, text)
         for url in links:
             try:
-                file = await self.download_file(url)
-                extension = filetype.guess_extension(file)
-                if extension in ('wav', 'mp3'):
-                    await bot.send_voice_message(message["FromWxid"], voice=file, format=extension)
-                elif extension in ('jpg', 'jpeg', "png", "gif", "bmp", "svg"):
-                    await bot.send_image_message(message["FromWxid"], file)
-                elif extension in ('mp4', 'avi', 'mov', 'mkv', 'flv'):
-                    await bot.send_video_message(message["FromWxid"], video=file, image="None")
+                file_content = await self.download_file(url)
+                if file_content:
+                    # 检测文件类型
+                    kind = filetype.guess(file_content)
+                    if kind is None:
+                        # 如果无法检测文件类型，尝试从URL获取
+                        ext = os.path.splitext(url)[1].lower().lstrip('.')
+                        if not ext:
+                            logger.warning(f"无法识别文件类型: {url}")
+                            continue
+                    else:
+                        ext = kind.extension
+
+                    # 根据文件类型发送不同类型的消息
+                    if ext in ('wav', 'mp3', 'ogg', 'm4a'):
+                        await bot.send_voice_message(message["FromWxid"], voice=file_content, format=ext)
+                        logger.info(f"发送语音消息成功，大小: {len(file_content)} 字节")
+                    elif ext in ('jpg', 'jpeg', 'png', 'gif', 'bmp', 'svg'):
+                        await bot.send_image_message(message["FromWxid"], file_content)
+                        logger.info(f"发送图片消息成功，大小: {len(file_content)} 字节")
+                    elif ext in ('mp4', 'avi', 'mov', 'mkv', 'flv'):
+                        await bot.send_video_message(message["FromWxid"], video=file_content, image="None")
+                        logger.info(f"发送视频消息成功，大小: {len(file_content)} 字节")
+                    else:
+                        # 其他类型文件，发送文本通知
+                        file_name = os.path.basename(url)
+                        await bot.send_text_message(message["FromWxid"], f"下载了文件: {file_name}\n类型: {ext}\n大小: {len(file_content)/1024:.2f} KB")
+                        logger.info(f"发送文件通知成功，文件名: {file_name}, 类型: {ext}, 大小: {len(file_content)} 字节")
             except Exception as e:
-                logger.error(f"下载文件 {url} 失败: {e}")
+                logger.error(f"处理链接文件 {url} 失败: {e}")
+                logger.error(traceback.format_exc())
                 await bot.send_text_message(message["FromWxid"], f"下载文件 {url} 失败")
 
         # 识别普通文件链接
@@ -2331,49 +2363,61 @@ class Dify(PluginBase):
             parsed_url = urllib.parse.urlparse(url)
             filename = os.path.basename(parsed_url.path)
             if not filename:
-                filename = "downloaded_file"
+                filename = f"downloaded_file_{int(time.time())}"
 
-            logger.debug(f"开始下载文件: {url}")
-            async with aiohttp.ClientSession(proxy=self.http_proxy) as session:
-                async with session.get(url) as resp:
-                    if resp.status != 200:
-                        await bot.send_text_message(message["FromWxid"], f"下载文件失败: HTTP {resp.status}")
-                        return
+            logger.info(f"开始下载文件: {url}")
 
-                    content = await resp.read()
+            # 使用改进后的download_file方法
+            content = await self.download_file(url)
+            if not content:
+                await bot.send_text_message(message["FromWxid"], f"下载文件失败: {url}")
+                return
 
-                    # 检测文件类型
-                    kind = filetype.guess(content)
-                    if kind is None:
-                        # 如果无法检测文件类型,尝试从Content-Type或URL获取
-                        content_type = resp.headers.get('Content-Type', '')
-                        ext = mimetypes.guess_extension(content_type) or os.path.splitext(filename)[1]
-                        if not ext:
-                            await bot.send_text_message(message["FromWxid"], f"无法识别文件类型: {filename}")
-                            return
-                    else:
-                        ext = f".{kind.extension}"
+            # 检测文件类型
+            kind = filetype.guess(content)
+            if kind is None:
+                # 如果无法检测文件类型,尝试从URL获取
+                ext = os.path.splitext(filename)[1].lower()
+                if not ext:
+                    # 如果没有扩展名，使用默认扩展名
+                    ext = ".txt"
+                    logger.warning(f"无法识别文件类型，使用默认扩展名: {ext}")
+            else:
+                ext = f".{kind.extension}"
+                logger.info(f"检测到文件类型: {kind.mime}, 扩展名: {ext}")
 
-                    # 确保文件名有扩展名
-                    if not os.path.splitext(filename)[1]:
-                        filename = f"{filename}{ext}"
+            # 确保文件名有扩展名
+            if not os.path.splitext(filename)[1]:
+                filename = f"{filename}{ext}"
 
-                    # 根据文件类型发送不同类型的消息
-                    if ext.lower() in ['.jpg', '.jpeg', '.png', '.gif', '.bmp']:
-                        await bot.send_image_message(message["FromWxid"], content)
-                    elif ext.lower() in ['.mp3', '.wav', '.ogg', 'm4a']:
-                        await bot.send_voice_message(message["FromWxid"], voice=content, format=ext[1:])
-                    elif ext.lower() in ['.mp4', '.avi', '.mov', '.mkv']:
-                        await bot.send_video_message(message["FromWxid"], video=content, image="None")
-                    else:
-                        # 其他类型文件，发送文件内容
-                        await bot.send_text_message(message["FromWxid"], f"文件名: {filename}\n内容长度: {len(content)} 字节")
+            # 根据文件类型发送不同类型的消息
+            if ext.lower() in ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.svg']:
+                await bot.send_image_message(message["FromWxid"], content)
+                logger.info(f"发送图片消息成功，文件名: {filename}, 大小: {len(content)} 字节")
+            elif ext.lower() in ['.mp3', '.wav', '.ogg', '.m4a']:
+                await bot.send_voice_message(message["FromWxid"], voice=content, format=ext[1:])
+                logger.info(f"发送语音消息成功，文件名: {filename}, 大小: {len(content)} 字节")
+            elif ext.lower() in ['.mp4', '.avi', '.mov', '.mkv', '.flv']:
+                await bot.send_video_message(message["FromWxid"], video=content, image="None")
+                logger.info(f"发送视频消息成功，文件名: {filename}, 大小: {len(content)} 字节")
+            else:
+                # 其他类型文件，发送文件信息
+                await bot.send_text_message(message["FromWxid"], f"文件名: {filename}\n类型: {ext[1:]}\n大小: {len(content)/1024:.2f} KB")
+                logger.info(f"发送文件信息成功，文件名: {filename}, 大小: {len(content)} 字节")
 
-                    logger.debug(f"文件 {filename} 发送成功")
+            # 缓存文件，便于后续使用
+            mime_type = kind.mime if kind else f"application/{ext[1:]}"
+            self.cache_file(message["SenderWxid"], content, filename, mime_type)
+            logger.info(f"文件已缓存，用户: {message['SenderWxid']}, 文件名: {filename}")
+
+            # 如果是私聊，也缓存到聊天对象的ID
+            if message["FromWxid"] != message.get("SenderWxid", message["FromWxid"]):
+                self.cache_file(message["FromWxid"], content, filename, mime_type)
+                logger.info(f"文件已缓存到聊天对象: {message['FromWxid']}, 文件名: {filename}")
 
         except Exception as e:
             logger.error(f"下载或发送文件失败: {e}")
-            await bot.send_text_message(message["FromWxid"], f"处理文件失败: {str(e)}")
+            logger.error(traceback.format_exc())
 
     @on_xml_message(priority=98)  # 使用高优先级确保先处理
     async def handle_xml_file(self, bot: WechatAPIClient, message: dict):
@@ -2422,11 +2466,8 @@ class Dify(PluginBase):
                 logger.info(f"Dify: 附件ID: {attach_id}")
                 logger.info(f"Dify: 文件大小: {total_len}")
 
-                # 发送通知
-                await bot.send_text_message(
-                    message["FromWxid"],
-                    f"Dify: 正在下载文件..."
-                )
+                # 不发送下载提示
+                logger.info(f"开始下载文件: {title}, 大小: {total_len} 字节")
 
                 # 使用 /Tools/DownloadFile API 下载文件
                 logger.info("Dify: 开始下载文件...")
@@ -2574,24 +2615,12 @@ class Dify(PluginBase):
                     if from_wxid != sender_wxid:
                         self.cache_file(from_wxid, binary_file_data, file_name, mime_type)
 
-                    # 发送下载成功通知
-                    await bot.send_text_message(
-                        message["FromWxid"],
-                        f"Dify: 文件下载成功！\n文件名: {file_name}\n文件大小: {len(file_data)/1024:.2f} KB\n\n文件已缓存，在接下来的5分钟内与我对话时将自动包含此文件。"
-                    )
+                    logger.info(f"文件下载成功并已缓存: {file_name}, 大小: {len(binary_file_data)/1024:.2f} KB")
                 else:
                     logger.warning("Dify: 所有API端点尝试失败")
-                    await bot.send_text_message(
-                        message["FromWxid"],
-                        "Dify: 文件下载失败，请重新发送。"
-                    )
         except Exception as e:
             logger.error(f"Dify: 处理XML消息时发生错误: {str(e)}")
             logger.error(traceback.format_exc())
-            await bot.send_text_message(
-                message["FromWxid"],
-                f"Dify: 处理文件时发生异常: {str(e)}"
-            )
 
         return True  # 允许后续插件处理
 
@@ -2877,13 +2906,8 @@ class Dify(PluginBase):
             if from_wxid != sender_wxid:
                 self.cache_file(from_wxid, file_content, file_name, mime_type)
 
-            # 发送确认消息
-            await bot.send_text_message(from_wxid, f"已收到文件: {file_name}\n大小: {len(file_content)/1024:.2f} KB\n类型: {mime_type}\n\n文件已缓存，在接下来的5分钟内与我对话时将自动包含此文件。")
+            logger.info(f"文件已缓存: {file_name}, 大小: {len(file_content)/1024:.2f} KB, 类型: {mime_type}")
 
         except Exception as e:
             logger.error(f"处理文件消息失败: {e}")
             logger.error(traceback.format_exc())
-            try:
-                await bot.send_text_message(message.get("FromWxid", ""), f"处理文件失败: {str(e)}")
-            except:
-                pass

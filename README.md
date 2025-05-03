@@ -10,6 +10,7 @@ XXXBot 是一个基于微信的智能机器人系统，通过整合多种 API �
 
 - **849 协议**：适用于 iPad 版本
 - **855 协议**：适用于安卓 PAD 版本
+- **iapd 协议**：适用于 855 iPad 版本
 
 通过在 `main_config.toml` 文件中设置 `Protocol.version` 参数，系统会自动选择相应的服务和 API 路径。详细配置方法请参见[协议配置](#协议配置)部分。
 
@@ -282,7 +283,7 @@ XXXBot 是一个基于微信的智能机器人系统，通过整合多种 API �
    **然后启动主服务**：
 
    ```bash
-   python app.py
+   python main.py
    ```
 
 #### 🔺 方法二：Docker 安装 🐳

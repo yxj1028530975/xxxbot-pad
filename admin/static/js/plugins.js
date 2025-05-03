@@ -2,6 +2,7 @@
 let plugins = [];
 let currentPluginId = null;
 let currentFilter = 'all';
+let currentFramework = 'original'; // 默认显示原始框架插件
 let configModal = null;
 let uploadModal = null;
 let marketPlugins = [];
@@ -210,6 +211,26 @@ document.addEventListener('DOMContentLoaded', function() {
         // 重置错误状态
         document.getElementById('plugin-config-error').style.display = 'none';
     });
+
+    // 为框架选择按钮添加点击事件
+    const frameworkButtons = document.querySelectorAll('[data-framework]');
+    if (frameworkButtons.length > 0) {
+        frameworkButtons.forEach(button => {
+            button.addEventListener('click', function() {
+                // 移除所有按钮的active类
+                frameworkButtons.forEach(btn => btn.classList.remove('active'));
+                // 添加当前按钮的active类
+                this.classList.add('active');
+                // 获取框架类型
+                const framework = this.getAttribute('data-framework');
+                // 加载指定框架的插件
+                loadPlugins(framework);
+            });
+        });
+        console.log('框架选择按钮事件已添加');
+    } else {
+        console.warn('找不到框架选择按钮，无法添加事件监听器');
+    }
 });
 
 // 检查网络连接
@@ -271,7 +292,7 @@ async function processOfflineQueue() {
 }
 
 // 加载插件列表
-async function loadPlugins() {
+async function loadPlugins(framework = 'original') {
     const pluginList = document.getElementById('plugin-list');
 
     try {
@@ -284,7 +305,17 @@ async function loadPlugins() {
             </div>
         `;
 
-        const response = await fetch('/api/plugins');
+        // 根据框架选择不同的API端点
+        let apiEndpoint = '/api/plugins'; // 默认原始框架
+        if (framework === 'dow') {
+            apiEndpoint = '/api/dow_plugins'; // DOW框架
+        } else if (framework === 'all') {
+            apiEndpoint = '/api/all_plugins'; // 所有框架
+        }
+        
+        currentFramework = framework; // 保存当前框架类型
+        
+        const response = await fetch(apiEndpoint);
         const data = await response.json();
 
         if (data.success) {
@@ -405,10 +436,19 @@ function renderPluginList(pluginsList) {
             cardElement.classList.add('disabled');
         }
 
+        // 获取框架标识
+        let frameworkBadge = '';
+        if (plugin.framework) {
+            const frameworkName = plugin.framework === 'original' ? '原框架' : 'DOW框架';
+            const badgeColor = plugin.framework === 'original' ? 'info' : 'primary';
+            frameworkBadge = `<span class="badge bg-${badgeColor} me-2" title="来自${frameworkName}">${frameworkName}</span>`;
+        }
+
         // 生成卡片HTML
         cardElement.innerHTML = `
             <div class="card-header p-3 pt-4 pb-4 bg-gradient-light border-0 position-relative" style="background: linear-gradient(135deg, #f8f9fa, #e9ecef);">
                 <div class="plugin-status-container">
+                    ${frameworkBadge}
                     ${hasUpdate ? `<span class="badge bg-warning me-2" title="可更新到: v${marketVersion}">有更新</span>` : ''}
                     <span class="badge bg-${statusClass} status-badge">${statusText}</span>
                     <div class="form-check form-switch plugin-switch ms-2">

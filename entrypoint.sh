@@ -44,32 +44,43 @@ sleep 3
 # 读取协议版本配置
 echo "读取协议版本配置..."
 PROTOCOL_VERSION="849"  # 默认使用849协议
+FRAMEWORK_TYPE="default"  # 默认使用默认框架
 
 # 检查配置文件是否存在
 if [ -f "/app/main_config.toml" ]; then
-    # 使用grep和awk提取Protocol部分中的version值
-    # 这种方法可以提取字符串值，包括非数字的协议版本
+    # 提取协议版本
     EXTRACTED_VERSION=$(grep -A 5 '\[Protocol\]' /app/main_config.toml | grep 'version' | awk -F '"' '{print $2}')
-
+    
     if [ ! -z "$EXTRACTED_VERSION" ]; then
         PROTOCOL_VERSION="$EXTRACTED_VERSION"
         echo "从配置文件中提取到协议版本: $PROTOCOL_VERSION"
     else
         echo "未从配置文件中提取到协议版本，使用默认值: $PROTOCOL_VERSION"
     fi
+    
+    # 提取框架类型
+    EXTRACTED_FRAMEWORK=$(grep -A 5 '\[Framework\]' /app/main_config.toml | grep 'type' | awk -F '"' '{print $2}')
+    
+    if [ ! -z "$EXTRACTED_FRAMEWORK" ]; then
+        FRAMEWORK_TYPE="$EXTRACTED_FRAMEWORK"
+        echo "从配置文件中提取到框架类型: $FRAMEWORK_TYPE"
+    else
+        echo "未从配置文件中提取到框架类型，使用默认值: $FRAMEWORK_TYPE"
+    fi
 fi
 
 # 打印协议版本信息，包括字符长度和十六进制表示
 echo "使用协议版本: '$PROTOCOL_VERSION'"
 echo "协议版本字符长度: ${#PROTOCOL_VERSION}"
-echo "协议版本十六进制表示: $(echo -n "$PROTOCOL_VERSION" | hexdump -C)"
+if command -v hexdump &> /dev/null; then
+    echo "协议版本十六进制表示: $(echo -n "$PROTOCOL_VERSION" | hexdump -C)"
+else
+    echo "协议版本十六进制表示: (hexdump命令不可用)"
+fi
 
 # 清理可能的空格和不可见字符
 CLEAN_VERSION=$(echo "$PROTOCOL_VERSION" | tr -d '[:space:]')
 echo "清理后的协议版本: '$CLEAN_VERSION'"
-
-# 启动pad服务
-echo "启动pad服务..."
 
 # 根据协议版本选择不同的服务路径
 # 使用更严格的比较方式
@@ -82,11 +93,13 @@ elif [[ "$CLEAN_VERSION" == "ipad" ]]; then
     PAD_SERVICE_PATH="/app/849/pad3/linuxService"
     echo "使用iPad协议服务路径: $PAD_SERVICE_PATH"
 else
-    # 849版本使用pad目录
+    # 默认使用849协议路径
     PAD_SERVICE_PATH="/app/849/pad/linuxService"
     echo "使用849协议服务路径: $PAD_SERVICE_PATH"
 fi
 
+# 启动pad服务（协议服务）
+echo "启动pad服务（协议服务）..."
 if [ -f "$PAD_SERVICE_PATH" ]; then
     # 在Linux系统上确保文件有执行权限
     chmod +x "$PAD_SERVICE_PATH"
@@ -121,9 +134,169 @@ else
     echo "警告：pad服务文件不存在: $PAD_SERVICE_PATH"
 fi
 
-# 启动主应用
-echo "启动XXXBot主应用..."
-exec python main.py
-
-# 保持容器运行
-wait
+# 根据框架类型选择启动哪个框架
+if [[ "$FRAMEWORK_TYPE" == "dow" ]]; then
+    # 使用dow框架
+    DOW_FRAMEWORK_PATH="/app/dow"
+    echo "选择使用dow框架: $DOW_FRAMEWORK_PATH"
+    
+    if [ -d "$DOW_FRAMEWORK_PATH" ]; then
+        echo "直接启动dow框架..."
+        # 检查app.py是否存在
+        if [ -f "$DOW_FRAMEWORK_PATH/app.py" ]; then
+            cd "$DOW_FRAMEWORK_PATH"
+            
+            # 同时启动admin后台
+            echo "正在启动admin后台界面..."
+            cd /app
+            python /app/admin/run_server.py &
+            ADMIN_PID=$!
+            echo "Admin后台已启动，进程ID: $ADMIN_PID"
+            
+            # 切回dow目录并启动app.py
+            cd "$DOW_FRAMEWORK_PATH"
+            echo "启动app.py..."
+            exec python app.py
+        else
+            echo "警告：未找到dow框架的app.py"
+            # 如果dow框架不存在，启动默认框架
+            echo "启动默认框架..."
+            exec python /app/main.py
+        fi
+    else
+        echo "警告：dow框架目录不存在: $DOW_FRAMEWORK_PATH"
+        # 如果dow框架目录不存在，启动默认框架
+        echo "启动默认框架..."
+        exec python /app/main.py
+    fi
+elif [[ "$FRAMEWORK_TYPE" == "dual" ]]; then
+    # 双框架模式：先启动原始框架，等待登录成功后再启动DOW框架
+    echo "选择使用双框架模式：先启动原始框架，登录成功后再启动DOW框架"
+    
+    # 准备两个框架路径
+    DOW_FRAMEWORK_PATH="/app/dow"
+    ORIGINAL_FRAMEWORK_PATH="/app"
+    
+    # 检查框架目录是否存在
+    if [ ! -d "$DOW_FRAMEWORK_PATH" ]; then
+        echo "警告：DOW框架目录不存在: $DOW_FRAMEWORK_PATH，将只启动原始框架"
+        echo "启动默认框架..."
+        exec python /app/main.py
+    fi
+    
+    # 启动原始框架
+    echo "启动原始框架..."
+    cd $ORIGINAL_FRAMEWORK_PATH
+    python /app/main.py &
+    ORIGINAL_PID=$!
+    echo "原始框架已启动，进程ID: $ORIGINAL_PID"
+    
+    # 启动消息回调守护进程
+    echo "等待3秒后启动消息回调守护进程..."
+    sleep 3
+    echo "启动消息回调守护进程..."
+    cd $ORIGINAL_FRAMEWORK_PATH
+    python /app/wx849_callback_daemon.py &
+    CALLBACK_PID=$!
+    echo "消息回调守护进程已启动，进程ID: $CALLBACK_PID"
+    
+    # 等待原始框架登录成功
+    echo "等待原始框架登录成功..."
+    # 定义可能的robot_stat文件路径
+    POSSIBLE_PATHS=(
+        "/app/resource/robot_stat.json"
+        "/app/resource/robot_stat.json"
+        "/resource/robot_stat.json"
+        "/app/resource/robot-stat.json"
+        "/app/robot_stat.json"
+    )
+    
+    # 检查实际文件路径
+    ROBOT_STAT_FILE=""
+    for path in "${POSSIBLE_PATHS[@]}"; do
+        if [ -f "$path" ]; then
+            ROBOT_STAT_FILE="$path"
+            echo "找到robot_stat.json文件: $ROBOT_STAT_FILE"
+            break
+        fi
+    done
+    
+    # 如果没有找到文件，使用默认路径
+    if [ -z "$ROBOT_STAT_FILE" ]; then
+        ROBOT_STAT_FILE="/app/resource/robot_stat.json"
+        echo "未找到robot_stat.json文件，使用默认路径: $ROBOT_STAT_FILE"
+    fi
+    
+    MAX_WAIT_TIME=300  # 最大等待时间(秒)
+    WAIT_TIME=0
+    
+    while [ $WAIT_TIME -lt $MAX_WAIT_TIME ]; do
+        # 检查是否存在手动启动信号
+        if [ -f "/app/force_start_dow" ]; then
+            echo "检测到手动启动信号，跳过等待直接启动DOW框架"
+            break
+        fi
+        
+        # 检查robot_stat.json是否存在且包含wxid
+        if [ -f "$ROBOT_STAT_FILE" ]; then
+            # 使用更灵活的方式提取wxid，兼容多种格式
+            WXID=$(grep -o '"wxid"[^,]*' $ROBOT_STAT_FILE | cut -d':' -f2 | tr -d '"' | tr -d ' ')
+            if [ ! -z "$WXID" ]; then
+                echo "检测到原始框架已登录成功，wxid: $WXID"
+                break
+            else
+                # 如果上面的方法失败，尝试另一种格式
+                WXID=$(grep -o '"wxid"[ ]*:[ ]*"[^"]*"' $ROBOT_STAT_FILE | grep -o '"[^"]*"' | tail -1 | tr -d '"')
+                if [ ! -z "$WXID" ]; then
+                    echo "检测到原始框架已登录成功，wxid: $WXID (第二种格式)"
+                    break
+                fi
+            fi
+            
+            # 显示文件内容，帮助调试
+            echo "robot_stat.json内容:"
+            cat $ROBOT_STAT_FILE
+        else
+            echo "robot_stat.json文件不存在，继续等待..."
+        fi
+        
+        # 等待5秒后再次检查
+        sleep 5
+        WAIT_TIME=$((WAIT_TIME + 5))
+        echo "等待原始框架登录中... ${WAIT_TIME}/${MAX_WAIT_TIME}秒"
+    done
+    
+    if [ $WAIT_TIME -ge $MAX_WAIT_TIME ]; then
+        echo "等待原始框架登录超时，DOW框架将不会启动"
+        # 继续等待原始框架运行
+        wait $ORIGINAL_PID
+        exit 1
+    fi
+    
+    # 原始框架登录成功，启动DOW框架
+    echo "原始框架已登录成功，开始启动DOW框架..."
+    cd $DOW_FRAMEWORK_PATH
+    
+    # 确保DOW框架配置正确
+    # 检查配置文件是否存在
+    if [ -f "$DOW_FRAMEWORK_PATH/config.json" ]; then
+        # 可以在这里添加修改DOW配置的代码
+        echo "DOW框架配置文件已存在"
+    fi
+    
+    # 启动DOW框架
+    echo "启动DOW框架..."
+    python $DOW_FRAMEWORK_PATH/app.py &
+    DOW_PID=$!
+    echo "DOW框架已启动，进程ID: $DOW_PID"
+    
+    # 等待所有进程结束
+    wait $ORIGINAL_PID $DOW_PID
+else
+    # 使用默认框架
+    echo "使用默认框架..."
+    
+    # 启动主应用
+    echo "启动XXXBot主应用..."
+    exec python /app/main.py
+fi

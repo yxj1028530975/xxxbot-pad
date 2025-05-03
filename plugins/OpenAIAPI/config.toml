@@ -1,10 +1,10 @@
 [OpenAIAPI]
 enable = true                           # 是否启用此功能
-api-key = ""                            # 后端API密钥，如果后端需要
+api-key = "sk-cxV3YnihIzGylcsTAc856289145a4617Bb0351F35289D6A7"                            # 后端API密钥，如果后端需要
 base-url = "https://api.openai.com/v1"  # 后端API地址，可以是OpenAI或兼容的API服务
 
 # 模型配置
-default-model = "gpt-3.5-turbo"         # 默认使用的模型
+default-model = "gemini-2.0-flash"         # 默认使用的模型
 available-models = [                    # 可用模型列表
     "gpt-3.5-turbo",
     "gpt-4",
@@ -20,6 +20,12 @@ command-tip = """-----OpenAI API-----
 支持标准OpenAI API格式
 可用于接入各种支持OpenAI API的应用
 """
+
+# 微信消息设置
+trigger_prefix = "/ai"                  # 触发前缀，群聊中必须使用此前缀
+private_chat_all = true                # 是否在私聊中处理所有消息，设为true会响应所有私聊消息
+max_context_messages = 10               # 最大上下文消息数量
+
 
 # 积分系统
 price = 0                               # 每次使用扣除的积分，0表示不扣除
