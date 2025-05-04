@@ -65,7 +65,13 @@ class WX849Message(ChatMessage):
                 # 检查是否被@，与gewechat保持一致
                 atuserlist_elem = root.find('atuserlist')
                 if atuserlist_elem is not None and atuserlist_elem.text:
-                    self.is_at = self.to_user_id in atuserlist_elem.text
+                    # 提取@列表
+                    at_users = atuserlist_elem.text.split(",")
+                    for user in at_users:
+                        if user.strip():
+                            self.at_list.append(user.strip())
+                    # 检查是否@了机器人
+                    self.is_at = self.to_user_id in self.at_list
         except Exception as e:
             # 解析失败，保持为空字符串
             pass

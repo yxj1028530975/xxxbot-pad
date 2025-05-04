@@ -9,6 +9,7 @@ import aiohttp
 import subprocess
 import uuid
 import time
+import traceback
 from loguru import logger
 import tomllib
 from utils.decorators import *
@@ -63,7 +64,21 @@ class YujieSajiao(PluginBase):
                     voice_data = f.read()
 
                 # 发送语音消息
-                await bot.send_voice_message(message["FromWxid"], voice=voice_data, format="mp3")
+                logger.info(f"[YujieSajiao] 开始发送语音消息: 接收者={message['FromWxid']}, 文件大小={len(voice_data)}字节")
+
+                # 记录bot对象信息
+                logger.info(f"[YujieSajiao] bot对象类型: {type(bot)}")
+                logger.info(f"[YujieSajiao] bot.wxid: {bot.wxid}")
+
+                # 记录send_voice_message方法的源码
+                import inspect
+                logger.info(f"[YujieSajiao] send_voice_message方法源码:\n{inspect.getsource(bot.send_voice_message)}")
+
+                # 发送语音消息
+                result = await bot.send_voice_message(message["FromWxid"], voice=voice_data, format="mp3")
+
+                # 记录返回结果
+                logger.info(f"[YujieSajiao] 语音发送结果: {result}")
                 logger.info(f"[YujieSajiao] 成功发送御姐撒娇语音")
 
                 # 删除临时文件
@@ -96,16 +111,30 @@ class YujieSajiao(PluginBase):
             original_file = os.path.join(self.cache_dir, f"original_{timestamp}_{random_str}.mp3")
             processed_file = os.path.join(self.cache_dir, f"processed_{timestamp}_{random_str}.mp3")
 
+            logger.info(f"[YujieSajiao] 开始下载语音文件: URL={self.api_url}, 代理={self.http_proxy}")
+
             # 下载语音文件
             async with aiohttp.ClientSession() as session:
                 async with session.get(self.api_url, proxy=self.http_proxy, timeout=30) as response:
                     if response.status == 200:
                         # 将下载的数据保存到文件
                         content = await response.read()
+                        content_length = len(content)
+                        logger.info(f"[YujieSajiao] 下载的数据大小: {content_length}字节")
+
                         with open(original_file, "wb") as f:
                             f.write(content)
 
                         logger.info(f"[YujieSajiao] 成功下载语音文件到: {original_file}")
+
+                        # 检查文件是否存在
+                        if not os.path.exists(original_file):
+                            logger.error(f"[YujieSajiao] 文件保存失败，文件不存在: {original_file}")
+                            return None
+
+                        # 检查文件大小
+                        file_size = os.path.getsize(original_file)
+                        logger.info(f"[YujieSajiao] 保存的文件大小: {file_size}字节")
 
                         # 如果配置为使用ffmpeg处理文件
                         if self.use_ffmpeg:
@@ -115,6 +144,7 @@ class YujieSajiao(PluginBase):
                                 return original_file
 
                             # 使用ffmpeg处理文件
+                            logger.info(f"[YujieSajiao] 开始处理语音文件: {original_file} -> {processed_file}")
                             if self._process_audio_with_ffmpeg(original_file, processed_file):
                                 logger.info(f"[YujieSajiao] 成功处理语音文件: {processed_file}")
                                 return processed_file
@@ -123,12 +153,20 @@ class YujieSajiao(PluginBase):
                                 return original_file
                         else:
                             # 不使用ffmpeg，直接返回原始文件
+                            logger.info("[YujieSajiao] 不使用ffmpeg处理，直接使用原始文件")
                             return original_file
                     else:
                         logger.error(f"[YujieSajiao] 下载语音失败，状态码: {response.status}")
+                        # 尝试获取响应内容
+                        try:
+                            response_text = await response.text()
+                            logger.error(f"[YujieSajiao] 响应内容: {response_text}")
+                        except Exception as e:
+                            logger.error(f"[YujieSajiao] 无法获取响应内容: {e}")
                         return None
         except Exception as e:
             logger.error(f"[YujieSajiao] 下载或处理语音异常: {e}")
+            logger.error(f"[YujieSajiao] 异常详情: {traceback.format_exc()}")
             return None
 
     def _check_ffmpeg(self) -> bool:
@@ -151,6 +189,10 @@ class YujieSajiao(PluginBase):
             bool: 处理是否成功
         """
         try:
+            # 记录输入文件信息
+            input_file_size = os.path.getsize(input_file)
+            logger.info(f"[YujieSajiao] 输入文件大小: {input_file_size}字节")
+
             # 使用ffmpeg将音频转换为标准MP3格式
             command = [
                 "ffmpeg", "-y", "-i", input_file,
@@ -158,9 +200,31 @@ class YujieSajiao(PluginBase):
                 "-ac", "2", output_file
             ]
 
+            # 记录命令
+            logger.info(f"[YujieSajiao] ffmpeg命令: {' '.join(command)}")
+
             result = subprocess.run(command, capture_output=True, text=True)
 
             if result.returncode == 0:
+                # 记录输出文件信息
+                output_file_size = os.path.getsize(output_file)
+                logger.info(f"[YujieSajiao] 输出文件大小: {output_file_size}字节")
+
+                # 获取音频时长
+                try:
+                    duration_command = [
+                        "ffprobe", "-v", "error",
+                        "-show_entries", "format=duration",
+                        "-of", "default=noprint_wrappers=1:nokey=1",
+                        output_file
+                    ]
+                    duration_result = subprocess.run(duration_command, capture_output=True, text=True)
+                    if duration_result.returncode == 0:
+                        duration = float(duration_result.stdout.strip())
+                        logger.info(f"[YujieSajiao] 音频时长: {duration}秒")
+                except Exception as e:
+                    logger.error(f"[YujieSajiao] 获取音频时长失败: {e}")
+
                 return True
             else:
                 logger.error(f"[YujieSajiao] ffmpeg处理失败: {result.stderr}")
