@@ -398,7 +398,7 @@ class WX849Channel(ChatChannel):
                                                 except Exception as e:
                                                     logger.error(f"[WX849] 获取用户昵称失败: {e}")
                                                 
-                            self.is_logged_in = True
+                                                self.is_logged_in = True
                                                 logger.info(f"[WX849] 成功复用原始框架会话: user_id: {self.user_id}, nickname: {self.name}")
                                                 
                                                 # 启动HTTP服务器接收消息
@@ -412,7 +412,7 @@ class WX849Channel(ChatChannel):
                                             logger.error(f"[WX849] 检查原始框架会话失败，状态码: {response.status}")
                                             logger.error("[WX849] DOW框架只支持使用原始框架的会话，请确保原始框架已登录")
                                             return False
-                except Exception as e:
+                                except Exception as e:
                                     logger.error(f"[WX849] 检查原始框架会话时出错: {e}")
                                     logger.error("[WX849] DOW框架只支持使用原始框架的会话，请确保原始框架已登录")
                                     return False
@@ -448,7 +448,7 @@ class WX849Channel(ChatChannel):
                                 
                                 # 启动HTTP服务器接收消息
                                 await self._start_http_server()
-                return True
+                                return True
                     except Exception as e:
                         logger.error(f"[WX849] 读取备选路径配置失败: {e}")
                 
@@ -458,7 +458,7 @@ class WX849Channel(ChatChannel):
             logger.error(f"[WX849] 检查原始框架会话时发生异常: {e}")
             logger.error(traceback.format_exc())
             logger.error("[WX849] DOW框架只支持使用原始框架的会话，请确保原始框架已登录")
-        return False
+            return False
 
         # 如果执行到这里，表示未能找到有效的原始框架会话
         logger.error("[WX849] 未能检测到有效的原始框架会话")
@@ -514,7 +514,7 @@ class WX849Channel(ChatChannel):
             await self._process_callback_message(data)
             
             return web.json_response({"success": True})
-                except Exception as e:
+        except Exception as e:
             logger.error(f"[WX849] 处理回调消息失败: {e}")
             logger.error(traceback.format_exc())
             return web.json_response({"success": False, "message": str(e)}, status=500)
@@ -554,7 +554,7 @@ class WX849Channel(ChatChannel):
                         logger.debug(f"[WX849] 消息类型缺失或为0，设置为默认文本类型(1)")
                     
                     # 构建标准的消息对象
-                            is_group = False
+                    is_group = False
                     
                     # 判断是否是群消息
                     from_user_id = msg.get("fromUserName", msg.get("FromUserName", ""))
@@ -566,34 +566,34 @@ class WX849Channel(ChatChannel):
                         to_user_id = to_user_id["string"]
                     
                     if from_user_id and from_user_id.endswith("@chatroom"):
-                                is_group = True
+                        is_group = True
                     elif to_user_id and to_user_id.endswith("@chatroom"):
-                                is_group = True
+                        is_group = True
                         # 交换发送者和接收者，确保from_user_id是群ID
                         from_user_id, to_user_id = to_user_id, from_user_id
-                            
-                            # 创建消息对象
-                            cmsg = WX849Message(msg, is_group)
-                            
+                    
+                    # 创建消息对象
+                    cmsg = WX849Message(msg, is_group)
+                    
                     # 检查是否有发送者昵称信息，优先使用这个
                     if "SenderNickName" in msg and msg["SenderNickName"]:
                         cmsg.sender_nickname = msg["SenderNickName"]
                         logger.debug(f"[WX849] 使用回调中的发送者昵称: {cmsg.sender_nickname}")
                     
-                            # 处理消息
+                    # 处理消息
                     logger.debug(f"[WX849] 处理回调消息: ID:{cmsg.msg_id} 类型:{cmsg.msg_type}")
                     
                     # 调用原有的消息处理逻辑
-                            if is_group:
-                                self.handle_group(cmsg)
-                            else:
-                                self.handle_single(cmsg)
-                        except Exception as e:
+                    if is_group:
+                        self.handle_group(cmsg)
+                    else:
+                        self.handle_single(cmsg)
+                except Exception as e:
                     logger.error(f"[WX849] 处理单条回调消息失败: {e}")
                     logger.error(traceback.format_exc())
             
             return True
-            except Exception as e:
+        except Exception as e:
             logger.error(f"[WX849] 处理回调消息过程中出错: {e}")
             logger.error(traceback.format_exc())
             return False
@@ -974,77 +974,77 @@ class WX849Channel(ChatChannel):
                     cmsg.actual_user_id = cmsg.sender_wxid
                 logger.debug(f"[WX849] 使用回调提供的发送者昵称: {cmsg.actual_user_nickname}")
             else:
-            # 方法1: 尝试解析完整的格式 "wxid:\n消息内容"
-            split_content = cmsg.content.split(":\n", 1)
-            if len(split_content) > 1 and split_content[0] and not split_content[0].startswith("<"):
-                cmsg.sender_wxid = split_content[0]
-                cmsg.content = split_content[1]
-                sender_extracted = True
-                logger.debug(f"[WX849] 群聊发送者提取(方法1): {cmsg.sender_wxid}")
-                else:
-            # 方法2: 尝试解析简单的格式 "wxid:消息内容"
-                split_content = cmsg.content.split(":", 1)
+                # 方法1: 尝试解析完整的格式 "wxid:\n消息内容"
+                split_content = cmsg.content.split(":\n", 1)
                 if len(split_content) > 1 and split_content[0] and not split_content[0].startswith("<"):
                     cmsg.sender_wxid = split_content[0]
                     cmsg.content = split_content[1]
                     sender_extracted = True
-                    logger.debug(f"[WX849] 群聊发送者提取(方法2): {cmsg.sender_wxid}")
+                    logger.debug(f"[WX849] 群聊发送者提取(方法1): {cmsg.sender_wxid}")
+                else:
+                    # 方法2: 尝试解析简单的格式 "wxid:消息内容"
+                    split_content = cmsg.content.split(":", 1)
+                    if len(split_content) > 1 and split_content[0] and not split_content[0].startswith("<"):
+                        cmsg.sender_wxid = split_content[0]
+                        cmsg.content = split_content[1]
+                        sender_extracted = True
+                        logger.debug(f"[WX849] 群聊发送者提取(方法2): {cmsg.sender_wxid}")
                     else:
                         sender_extracted = False
-            
-            # 方法3: 尝试从回复XML中提取
-            if not sender_extracted and cmsg.content and cmsg.content.startswith("<"):
-                try:
-                    # 解析XML内容
-                    root = ET.fromstring(cmsg.content)
-                    
-                    # 查找不同类型的XML中可能存在的发送者信息
-                    if root.tag == "msg":
-                        # 常见的XML消息格式
-                        sender_node = root.find(".//username")
-                        if sender_node is not None and sender_node.text:
-                            cmsg.sender_wxid = sender_node.text
-                            sender_extracted = True
-                            logger.debug(f"[WX849] 群聊发送者从XML提取: {cmsg.sender_wxid}")
+                
+                # 方法3: 尝试从回复XML中提取
+                if not sender_extracted and cmsg.content and cmsg.content.startswith("<"):
+                    try:
+                        # 解析XML内容
+                        root = ET.fromstring(cmsg.content)
                         
-                        # 尝试其他可能的标签
-                        if not sender_extracted:
-                            for tag in ["fromusername", "sender", "from"]:
-                                sender_node = root.find(f".//{tag}")
-                                if sender_node is not None and sender_node.text:
-                                    cmsg.sender_wxid = sender_node.text
-                                    sender_extracted = True
-                                    logger.debug(f"[WX849] 群聊发送者从XML({tag})提取: {cmsg.sender_wxid}")
-                                    break
-                except Exception as e:
-                    logger.error(f"[WX849] 从XML提取群聊发送者失败: {e}")
-            
-            # 方法4: 尝试从其它字段提取
-            if not sender_extracted:
-                for key in ["SenderUserName", "sender", "senderId", "fromUser"]:
-                    if key in cmsg.msg and cmsg.msg[key]:
-                        cmsg.sender_wxid = str(cmsg.msg[key])
-                        sender_extracted = True
-                        logger.debug(f"[WX849] 群聊发送者从字段提取({key}): {cmsg.sender_wxid}")
-                        break
-            
-            # 如果仍然无法提取，设置为默认值但不要留空
-            if not sender_extracted or not cmsg.sender_wxid:
-                cmsg.sender_wxid = f"未知用户_{cmsg.from_user_id}"
-                logger.debug(f"[WX849] 无法提取群聊发送者，使用默认值: {cmsg.sender_wxid}")
-            
-            # 设置other_user_id为群ID，确保它不为None
-            cmsg.other_user_id = cmsg.from_user_id
-            
-            # 设置actual_user_id为发送者wxid
-            cmsg.actual_user_id = cmsg.sender_wxid
-            
-            # 异步获取发送者昵称并设置actual_user_nickname
-            # 但现在我们无法在同步方法中直接调用异步方法，所以先使用wxid
-            cmsg.actual_user_nickname = cmsg.sender_wxid
-            
-            # 启动异步任务获取昵称并更新actual_user_nickname
-            threading.Thread(target=lambda: asyncio.run(self._update_nickname_async(cmsg))).start()
+                        # 查找不同类型的XML中可能存在的发送者信息
+                        if root.tag == "msg":
+                            # 常见的XML消息格式
+                            sender_node = root.find(".//username")
+                            if sender_node is not None and sender_node.text:
+                                cmsg.sender_wxid = sender_node.text
+                                sender_extracted = True
+                                logger.debug(f"[WX849] 群聊发送者从XML提取: {cmsg.sender_wxid}")
+                            
+                            # 尝试其他可能的标签
+                            if not sender_extracted:
+                                for tag in ["fromusername", "sender", "from"]:
+                                    sender_node = root.find(f".//{tag}")
+                                    if sender_node is not None and sender_node.text:
+                                        cmsg.sender_wxid = sender_node.text
+                                        sender_extracted = True
+                                        logger.debug(f"[WX849] 群聊发送者从XML({tag})提取: {cmsg.sender_wxid}")
+                                        break
+                    except Exception as e:
+                        logger.error(f"[WX849] 从XML提取群聊发送者失败: {e}")
+                
+                # 方法4: 尝试从其它字段提取
+                if not sender_extracted:
+                    for key in ["SenderUserName", "sender", "senderId", "fromUser"]:
+                        if key in cmsg.msg and cmsg.msg[key]:
+                            cmsg.sender_wxid = str(cmsg.msg[key])
+                            sender_extracted = True
+                            logger.debug(f"[WX849] 群聊发送者从字段提取({key}): {cmsg.sender_wxid}")
+                            break
+                
+                # 如果仍然无法提取，设置为默认值但不要留空
+                if not sender_extracted or not cmsg.sender_wxid:
+                    cmsg.sender_wxid = f"未知用户_{cmsg.from_user_id}"
+                    logger.debug(f"[WX849] 无法提取群聊发送者，使用默认值: {cmsg.sender_wxid}")
+                
+                # 设置other_user_id为群ID，确保它不为None
+                cmsg.other_user_id = cmsg.from_user_id
+                
+                # 设置actual_user_id为发送者wxid
+                cmsg.actual_user_id = cmsg.sender_wxid
+                
+                # 异步获取发送者昵称并设置actual_user_nickname
+                # 但现在我们无法在同步方法中直接调用异步方法，所以先使用wxid
+                cmsg.actual_user_nickname = cmsg.sender_wxid
+                
+                # 启动异步任务获取昵称并更新actual_user_nickname
+                threading.Thread(target=lambda: asyncio.run(self._update_nickname_async(cmsg))).start()
             
             # 确保other_user_id设置为群ID
             cmsg.other_user_id = cmsg.from_user_id
@@ -1062,7 +1062,7 @@ class WX849Channel(ChatChannel):
             if hasattr(cmsg, 'sender_nickname') and cmsg.sender_nickname:
                 cmsg.actual_user_nickname = cmsg.sender_nickname
             else:
-            cmsg.actual_user_nickname = cmsg.from_user_id
+                cmsg.actual_user_nickname = cmsg.from_user_id
             
             logger.debug(f"[WX849] 设置私聊发送者信息: actual_user_id={cmsg.actual_user_id}, actual_user_nickname={cmsg.actual_user_nickname}")
 
@@ -1087,27 +1087,27 @@ class WX849Channel(ChatChannel):
             # 只有在sender_wxid尚未设置或是默认值时才进行提取
             # 避免重复提取导致覆盖先前成功提取的值
             if not hasattr(cmsg, 'sender_wxid') or not cmsg.sender_wxid or cmsg.sender_wxid.startswith("未知用户_"):
-            # 增强的群消息发送者提取逻辑
-            # 尝试多种可能的格式解析发送者信息
-            sender_extracted = False
-            
-            # 方法1: 尝试解析完整的格式 "wxid:\n消息内容"
-            split_content = cmsg.content.split(":\n", 1)
-            if len(split_content) > 1 and split_content[0] and not split_content[0].startswith("<"):
-                cmsg.sender_wxid = split_content[0]
-                cmsg.content = split_content[1]
-                sender_extracted = True
-                logger.debug(f"[WX849] 群聊发送者提取(方法1): {cmsg.sender_wxid}")
-            
-            # 方法2: 尝试解析简单的格式 "wxid:消息内容"
-            if not sender_extracted:
-                split_content = cmsg.content.split(":", 1)
+                # 增强的群消息发送者提取逻辑
+                # 尝试多种可能的格式解析发送者信息
+                sender_extracted = False
+                
+                # 方法1: 尝试解析完整的格式 "wxid:\n消息内容"
+                split_content = cmsg.content.split(":\n", 1)
                 if len(split_content) > 1 and split_content[0] and not split_content[0].startswith("<"):
                     cmsg.sender_wxid = split_content[0]
                     cmsg.content = split_content[1]
                     sender_extracted = True
-                    logger.debug(f"[WX849] 群聊发送者提取(方法2): {cmsg.sender_wxid}")
-            
+                    logger.debug(f"[WX849] 群聊发送者提取(方法1): {cmsg.sender_wxid}")
+                
+                # 方法2: 尝试解析简单的格式 "wxid:消息内容"
+                if not sender_extracted:
+                    split_content = cmsg.content.split(":", 1)
+                    if len(split_content) > 1 and split_content[0] and not split_content[0].startswith("<"):
+                        cmsg.sender_wxid = split_content[0]
+                        cmsg.content = split_content[1]
+                        sender_extracted = True
+                        logger.debug(f"[WX849] 群聊发送者提取(方法2): {cmsg.sender_wxid}")
+                
                 # 尝试从XML回复或引用中提取
                 if not sender_extracted and cmsg.content and cmsg.content.startswith("<"):
                     try:
@@ -1116,22 +1116,22 @@ class WX849Channel(ChatChannel):
                             node = root.find(f".//{tag}")
                             if node is not None and node.text:
                                 cmsg.sender_wxid = node.text
-                                    sender_extracted = True
+                                sender_extracted = True
                                 logger.debug(f"[WX849] 群聊发送者从XML提取: {cmsg.sender_wxid}")
-                                    break
-                        except Exception as e:
+                                break
+                    except Exception as e:
                         logger.debug(f"[WX849] 从XML提取发送者失败: {e}")
                 
                 # 如果仍然无法提取，设置为默认值
-            if not sender_extracted or not cmsg.sender_wxid:
-                cmsg.sender_wxid = f"未知用户_{cmsg.from_user_id}"
-                logger.debug(f"[WX849] 无法提取群聊发送者，使用默认值: {cmsg.sender_wxid}")
-            
-                # 确保其他字段同步更新
-            cmsg.actual_user_id = cmsg.sender_wxid
-            cmsg.actual_user_nickname = cmsg.sender_wxid
+                if not sender_extracted or not cmsg.sender_wxid:
+                    cmsg.sender_wxid = f"未知用户_{cmsg.from_user_id}"
+                    logger.debug(f"[WX849] 无法提取群聊发送者，使用默认值: {cmsg.sender_wxid}")
                 
-            logger.debug(f"[WX849] 设置实际发送者信息: actual_user_id={cmsg.actual_user_id}, actual_user_nickname={cmsg.actual_user_nickname}")
+                # 确保其他字段同步更新
+                cmsg.actual_user_id = cmsg.sender_wxid
+                cmsg.actual_user_nickname = cmsg.sender_wxid
+                
+                logger.debug(f"[WX849] 设置实际发送者信息: actual_user_id={cmsg.actual_user_id}, actual_user_nickname={cmsg.actual_user_nickname}")
             
             # 检测被@用户
             at_list = []
@@ -1174,7 +1174,7 @@ class WX849Channel(ChatChannel):
                         logger.debug(f"[WX849] 文本中直接包含@机器人群内昵称: @{cmsg.self_display_name}")
                         if self.wxid not in at_list:
                             at_list.append(self.wxid)
-        except Exception as e:
+            except Exception as e:
                 logger.error(f"[WX849] 提取@信息失败: {e}")
             
             # 设置at_list
@@ -2606,7 +2606,7 @@ class WX849Channel(ChatChannel):
                 if hasattr(msg, 'sender_nickname') and msg.sender_nickname:
                     context["from_user_nickname"] = msg.sender_nickname
                 else:
-                context["from_user_nickname"] = msg.sender_wxid if msg and hasattr(msg, 'sender_wxid') else ""
+                    context["from_user_nickname"] = msg.sender_wxid if msg and hasattr(msg, 'sender_wxid') else ""
                 
                 context["from_user_id"] = msg.sender_wxid if msg and hasattr(msg, 'sender_wxid') else ""
                 context["to_user_id"] = msg.to_user_id if msg and hasattr(msg, 'to_user_id') else ""
@@ -3667,11 +3667,11 @@ class WX849Channel(ChatChannel):
                                 return member.get("NickName")
                             else:
                                 return member_wxid
-        
+            
             # 如果缓存中没有，启动一个后台任务获取群成员，但本次先返回wxid
             logger.debug(f"[WX849] 未找到成员 {member_wxid} 的昵称信息，启动更新任务")
             threading.Thread(target=lambda: asyncio.run(self._get_group_member_details(group_id))).start()
-        return member_wxid
+            return member_wxid
         except Exception as e:
             logger.error(f"[WX849] 获取群成员昵称失败: {e}")
             logger.error(f"[WX849] 详细错误: {traceback.format_exc()}")
