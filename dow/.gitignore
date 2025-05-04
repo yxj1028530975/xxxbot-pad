@@ -36,8 +36,17 @@ plugins/banwords/lib/__pycache__
 !plugins/jina_sum/**/
 !plugins/custom_dify_app
 !plugins/group_at_autoreply
+!plugins/HotGirlsPlugin
+!plugins/TongyiPlugin
+!plugins/xiaojiejie_pic
+!plugins/yuewen
 client_config.json
-gewechat/
+
+# 通道目录
+!channel/gewechat/
+
+# 文档目录
+!docs/gewechat/
 
 # auto coder
 .auto-coder
