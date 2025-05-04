@@ -261,9 +261,9 @@ class ChatChannel(Channel):
                         reply = super().build_text_to_voice(reply.content)
                         return self._decorate_reply(context, reply)
                     if context.get("isgroup", False):
-                        if not conf().get("no_need_at", False):
-                            reply_text = "@" + context["msg"].actual_user_nickname + "\n" + reply_text.strip()
-                        reply_text = conf().get("group_chat_reply_prefix", "") + reply_text + conf().get(
+                        # 不再添加@前缀，因为我们使用API的At参数来实现@功能
+                        # 只添加配置的前缀和后缀
+                        reply_text = conf().get("group_chat_reply_prefix", "") + reply_text.strip() + conf().get(
                             "group_chat_reply_suffix", "")
                     else:
                         reply_text = conf().get("single_chat_reply_prefix", "") + reply_text + conf().get(

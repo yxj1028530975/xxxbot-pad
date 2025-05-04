@@ -28,6 +28,7 @@ import uuid
 import re
 import base64
 import subprocess
+import math
 
 # 增大日志行长度限制，以便完整显示XML内容
 try:
@@ -98,8 +99,8 @@ try:
             except ImportError:
                 # 尝试方式4：从wx849包导入
                 sys.path.append(os.path.dirname(lib_dir))
-                from wx849.WechatAPI import WechatAPIClient
-                import wx849.WechatAPI as WechatAPI
+                from WechatAPI import WechatAPIClient
+                import WechatAPI
                 logger.info("成功导入 WechatAPI 模块（方式4）")
 
     # 设置 WechatAPI 的 loguru 日志级别（关键修改）
@@ -589,6 +590,82 @@ class WX849Channel(ChatChannel):
                         cmsg.sender_nickname = msg["SenderNickName"]
                         logger.debug(f"[WX849] 使用回调中的发送者昵称: {cmsg.sender_nickname}")
 
+                    # 处理被@消息
+                    if is_group and "@" in str(msg.get("Content", "")):
+                        # 检查是否有@列表
+                        at_list = []
+
+                        # 方法1: 从RawLogLine中提取@列表
+                        raw_log_line = msg.get("RawLogLine", "")
+
+                        # 检查是否是被@消息
+                        if raw_log_line and "收到被@消息" in raw_log_line:
+                            logger.debug(f"[WX849] 检测到被@消息: {raw_log_line}")
+                            # 设置is_at标志
+                            cmsg.is_at = True
+                        # 检查是否有IsAtMessage标志
+                        elif "IsAtMessage" in msg and msg["IsAtMessage"]:
+                            logger.debug(f"[WX849] 检测到IsAtMessage标志")
+                            # 设置is_at标志
+                            cmsg.is_at = True
+
+                            # 尝试从日志行中提取@列表
+                            if "@:" in raw_log_line:
+                                try:
+                                    at_part = raw_log_line.split("@:", 1)[1].split(" ", 1)[0]
+                                    if at_part.startswith("[") and at_part.endswith("]"):
+                                        # 解析@列表
+                                        at_list_str = at_part[1:-1]  # 去除[]
+                                        if at_list_str:
+                                            at_items = at_list_str.split(",")
+                                            for item in at_items:
+                                                item = item.strip().strip("'\"")
+                                                if item:
+                                                    at_list.append(item)
+                                            logger.debug(f"[WX849] 从被@消息中提取到@列表: {at_list}")
+                                except Exception as e:
+                                    logger.debug(f"[WX849] 从被@消息中提取@列表失败: {e}")
+                        # 普通消息中的@列表提取
+                        elif raw_log_line and "@:" in raw_log_line:
+                            try:
+                                # 尝试从日志行中提取@列表
+                                at_part = raw_log_line.split("@:", 1)[1].split(" ", 1)[0]
+                                if at_part.startswith("[") and at_part.endswith("]"):
+                                    # 解析@列表
+                                    at_list_str = at_part[1:-1]  # 去除[]
+                                    if at_list_str:
+                                        at_items = at_list_str.split(",")
+                                        for item in at_items:
+                                            item = item.strip().strip("'\"")
+                                            if item:
+                                                at_list.append(item)
+                                        logger.debug(f"[WX849] 从RawLogLine提取到@列表: {at_list}")
+                            except Exception as e:
+                                logger.debug(f"[WX849] 从RawLogLine提取@列表失败: {e}")
+
+                        # 方法2: 从MsgSource中提取@列表
+                        if not at_list and "MsgSource" in msg:
+                            try:
+                                msg_source = msg.get("MsgSource", "")
+                                if msg_source:
+                                    root = ET.fromstring(msg_source)
+                                    atuserlist_elem = root.find('atuserlist')
+                                    if atuserlist_elem is not None and atuserlist_elem.text:
+                                        at_users = atuserlist_elem.text.split(",")
+                                        for user in at_users:
+                                            if user.strip():
+                                                at_list.append(user.strip())
+                                        logger.debug(f"[WX849] 从MsgSource提取到@列表: {at_list}")
+                            except Exception as e:
+                                logger.debug(f"[WX849] 从MsgSource提取@列表失败: {e}")
+
+                        # 设置@列表到消息对象
+                        if at_list:
+                            cmsg.at_list = at_list
+                            # 设置is_at标志
+                            cmsg.is_at = self.wxid in at_list
+                            logger.debug(f"[WX849] 设置@列表: {at_list}, is_at: {cmsg.is_at}")
+
                     # 处理消息
                     logger.debug(f"[WX849] 处理回调消息: ID:{cmsg.msg_id} 类型:{cmsg.msg_type}")
 
@@ -815,7 +892,9 @@ class WX849Channel(ChatChannel):
                     at_matched = False
                     if cmsg.at_list and self.wxid in cmsg.at_list:
                         at_matched = True
-                        logger.debug(f"[WX849] 在at_list中匹配到机器人wxid: {self.wxid}")
+                        # 设置is_at标志
+                        cmsg.is_at = True
+                        logger.debug(f"[WX849] 在at_list中匹配到机器人wxid: {self.wxid}, 设置is_at=True")
 
                     # 如果at_list为空，或者at_list中没有找到机器人wxid，则检查消息内容中是否直接包含@机器人的文本
                     if not at_matched and cmsg.content:
@@ -1202,8 +1281,28 @@ class WX849Channel(ChatChannel):
             # 检测被@用户
             at_list = []
             try:
-                # 提取@信息
-                if cmsg.content:
+                # 首先检查消息对象中是否已经有at_list和is_at标志
+                if hasattr(cmsg, 'at_list') and cmsg.at_list:
+                    at_list = cmsg.at_list
+                    logger.debug(f"[WX849] 使用已有的at_list: {at_list}")
+
+                    # 检查是否已经设置了is_at标志
+                    if hasattr(cmsg, 'is_at') and cmsg.is_at:
+                        logger.debug(f"[WX849] 消息已被标记为@机器人")
+                # 如果没有，尝试从消息内容中提取
+                elif cmsg.content:
+                    # 检查是否是被@消息
+                    if hasattr(cmsg, 'msg') and "RawLogLine" in cmsg.msg:
+                        raw_log_line = cmsg.msg.get("RawLogLine", "")
+                        if raw_log_line and "收到被@消息" in raw_log_line:
+                            logger.debug(f"[WX849] 检测到被@消息: {raw_log_line}")
+                            # 设置is_at标志
+                            cmsg.is_at = True
+                    # 检查是否有IsAtMessage标志
+                    if hasattr(cmsg, 'msg') and "IsAtMessage" in cmsg.msg and cmsg.msg["IsAtMessage"]:
+                        logger.debug(f"[WX849] 检测到IsAtMessage标志")
+                        # 设置is_at标志
+                        cmsg.is_at = True
                     import re
                     # 匹配@后跟随的非空白字符
                     at_pattern = re.compile(r'@([^\s]+)')
@@ -1240,6 +1339,42 @@ class WX849Channel(ChatChannel):
                         logger.debug(f"[WX849] 文本中直接包含@机器人群内昵称: @{cmsg.self_display_name}")
                         if self.wxid not in at_list:
                             at_list.append(self.wxid)
+
+                # 尝试从RawLogLine中提取@列表
+                if not at_list and hasattr(cmsg, 'msg') and "RawLogLine" in cmsg.msg:
+                    raw_log_line = cmsg.msg.get("RawLogLine", "")
+                    if raw_log_line and "@:" in raw_log_line:
+                        try:
+                            # 尝试从日志行中提取@列表
+                            at_part = raw_log_line.split("@:", 1)[1].split(" ", 1)[0]
+                            if at_part.startswith("[") and at_part.endswith("]"):
+                                # 解析@列表
+                                at_list_str = at_part[1:-1]  # 去除[]
+                                if at_list_str:
+                                    at_items = at_list_str.split(",")
+                                    for item in at_items:
+                                        item = item.strip().strip("'\"")
+                                        if item and item not in at_list:
+                                            at_list.append(item)
+                                    logger.debug(f"[WX849] 从RawLogLine提取到@列表: {at_list}")
+                        except Exception as e:
+                            logger.debug(f"[WX849] 从RawLogLine提取@列表失败: {e}")
+
+                # 尝试从MsgSource中提取@列表
+                if not at_list and hasattr(cmsg, 'msg') and "MsgSource" in cmsg.msg:
+                    try:
+                        msg_source = cmsg.msg.get("MsgSource", "")
+                        if msg_source:
+                            root = ET.fromstring(msg_source)
+                            atuserlist_elem = root.find('atuserlist')
+                            if atuserlist_elem is not None and atuserlist_elem.text:
+                                at_users = atuserlist_elem.text.split(",")
+                                for user in at_users:
+                                    if user.strip() and user.strip() not in at_list:
+                                        at_list.append(user.strip())
+                                logger.debug(f"[WX849] 从MsgSource提取到@列表: {at_list}")
+                    except Exception as e:
+                        logger.debug(f"[WX849] 从MsgSource提取@列表失败: {e}")
             except Exception as e:
                 logger.error(f"[WX849] 提取@信息失败: {e}")
 
@@ -1247,6 +1382,9 @@ class WX849Channel(ChatChannel):
             cmsg.at_list = at_list
             if at_list:
                 logger.debug(f"[WX849] 提取到at_list: {at_list}")
+                # 设置is_at标志
+                cmsg.is_at = self.wxid in at_list
+                logger.debug(f"[WX849] 设置is_at: {cmsg.is_at}")
         else:
             # 处理私聊消息发送者
             cmsg.at_list = []
@@ -1688,7 +1826,7 @@ class WX849Channel(ChatChannel):
 
             # 获取API配置
             api_host = conf().get("wx849_api_host", "127.0.0.1")
-            api_port = conf().get("wx849_api_port", 9000)
+            api_port = conf().get("wx849_api_port", 9011)
 
             # 确定API路径前缀
             protocol_version = conf().get("wx849_protocol_version", "849")
@@ -1714,7 +1852,7 @@ class WX849Channel(ChatChannel):
             logger.error(f"[WX849] API调用失败: {endpoint}, 错误: {e}")
             return None
 
-    async def _send_message(self, to_user_id, content, msg_type=1):
+    async def _send_message(self, to_user_id, content, msg_type=1, at_list=None, context=None):
         """发送消息的异步方法"""
         try:
             # 移除ignore_protection参数，使用正确的API参数格式
@@ -1722,14 +1860,57 @@ class WX849Channel(ChatChannel):
                 logger.error("[WX849] 发送消息失败: 接收者ID为空")
                 return None
 
+            # 检查是否是群聊
+            is_group = to_user_id.endswith("@chatroom")
+
+            # 处理@用户
+            at_param = ""
+            modified_content = content
+            if is_group and at_list and len(at_list) > 0:
+                # 获取第一个用户的wxid
+                first_user_id = at_list[0]
+                first_user_nickname = ""
+
+                # 如果是被@的消息，尝试从context中获取发送者的昵称
+                if context and "from_user_nickname" in context and "from_user_id" in context and context["from_user_id"] == first_user_id:
+                    first_user_nickname = context["from_user_nickname"]
+                    logger.debug(f"[WX849] 从context获取到用户 {first_user_id} 的昵称: {first_user_nickname}")
+                else:
+                    # 否则从群成员信息中获取昵称
+                    # 获取群ID
+                    group_id = to_user_id if to_user_id.endswith("@chatroom") else None
+                    if group_id:
+                        # 使用异步方法获取群成员昵称
+                        first_user_nickname = await self._get_chatroom_member_nickname(group_id, first_user_id)
+                        logger.debug(f"[WX849] 从群成员信息获取到用户 {first_user_id} 的昵称: {first_user_nickname}")
+                    else:
+                        # 如果不是群聊，从缓存中获取昵称
+                        first_user_nickname = self._get_nickname_from_wxid(first_user_id)
+                        logger.debug(f"[WX849] 从缓存获取到用户 {first_user_id} 的昵称: {first_user_nickname}")
+
+                # 在消息内容前添加@用户的文本，并添加换行符
+                modified_content = f"@{first_user_nickname}\n{modified_content}"
+                logger.debug(f"[WX849] 修改后的消息内容: {modified_content}")
+
+                # 使用用户wxid作为at_param，而不是昵称
+                # 这是因为微信API需要wxid来正确地@用户
+                at_param = first_user_id
+                logger.debug(f"[WX849] 发送@消息，@列表: {at_param}")
+
             # 根据API文档调整参数格式
             params = {
                 "ToWxid": to_user_id,
-                "Content": content,
+                "Content": modified_content,
                 "Type": msg_type,
-                "Wxid": self.wxid,   # 发送者wxid
-                "At": ""             # 空字符串表示不@任何人
+                "Wxid": self.wxid,   # 发送者wxid（机器人自己的wxid）
+                "At": at_param       # @用户列表，逗号分隔
             }
+
+            # 记录参数信息
+            logger.debug(f"[WX849] 发送消息参数 - 接收者: {to_user_id}, 机器人wxid: {self.wxid}, @列表: {at_param}")
+
+            # 记录API调用参数
+            logger.debug(f"[WX849] 发送消息API参数: {json.dumps(params, ensure_ascii=False)}")
 
             # 使用自定义的API调用方法
             result = await self._call_api("/Msg/SendTxt", params)
@@ -1737,9 +1918,12 @@ class WX849Channel(ChatChannel):
             # 检查结果
             if result and isinstance(result, dict):
                 success = result.get("Success", False)
-                if not success:
+                if success:
+                    logger.debug(f"[WX849] 发送消息API返回成功: {json.dumps(result, ensure_ascii=False)}")
+                else:
                     error_msg = result.get("Message", "未知错误")
                     logger.error(f"[WX849] 发送消息API返回错误: {error_msg}")
+                    logger.error(f"[WX849] 完整错误响应: {json.dumps(result, ensure_ascii=False)}")
 
             return result
         except Exception as e:
@@ -1805,7 +1989,22 @@ class WX849Channel(ChatChannel):
 
         if reply.type == ReplyType.TEXT:
             reply.content = remove_markdown_symbol(reply.content)
-            result = loop.run_until_complete(self._send_message(receiver, reply.content))
+
+            # 检查是否需要@用户
+            at_list = None
+            if context.get("isgroup", False) or context.get("is_group", False):
+                # 如果是群聊，则@原始发送者
+                if context.get("from_user_id"):
+                    # 使用发送者ID作为@对象
+                    at_list = [context.get("from_user_id")]
+                    logger.debug(f"[WX849] 将@原始发送者: {at_list}")
+                # 检查at_list是否为空
+                if not at_list:
+                    logger.debug(f"[WX849] at_list为空，检查context: {context}")
+
+            # 发送消息，传递at_list和context参数
+            result = loop.run_until_complete(self._send_message(receiver, reply.content, 1, at_list, context))
+
             if result and isinstance(result, dict) and result.get("Success", False):
                 logger.info(f"[WX849] 发送文本消息成功: 接收者: {receiver}")
                 if conf().get("log_level", "INFO") == "DEBUG":
@@ -1815,7 +2014,22 @@ class WX849Channel(ChatChannel):
 
         elif reply.type == ReplyType.ERROR or reply.type == ReplyType.INFO:
             reply.content = remove_markdown_symbol(reply.content)
-            result = loop.run_until_complete(self._send_message(receiver, reply.content))
+
+            # 检查是否需要@用户
+            at_list = None
+            if context.get("isgroup", False) or context.get("is_group", False):
+                # 如果是群聊，则@原始发送者
+                if context.get("from_user_id"):
+                    # 使用发送者ID作为@对象
+                    at_list = [context.get("from_user_id")]
+                    logger.debug(f"[WX849] 将@原始发送者: {at_list}")
+                # 检查at_list是否为空
+                if not at_list:
+                    logger.debug(f"[WX849] at_list为空，检查context: {context}")
+
+            # 发送消息，传递at_list和context参数
+            result = loop.run_until_complete(self._send_message(receiver, reply.content, 1, at_list, context))
+
             if result and isinstance(result, dict) and result.get("Success", False):
                 logger.info(f"[WX849] 发送消息成功: 接收者: {receiver}")
                 if conf().get("log_level", "INFO") == "DEBUG":
@@ -1823,33 +2037,40 @@ class WX849Channel(ChatChannel):
             else:
                 logger.warning(f"[WX849] 发送消息可能失败: 接收者: {receiver}, 结果: {result}")
 
-        elif reply.type == ReplyType.IMAGE_URL:
-            # 从网络下载图片并发送
-            img_url = reply.content
-            logger.debug(f"[WX849] 开始下载图片, url={img_url}")
+        elif reply.type == ReplyType.IMAGE or reply.type == ReplyType.IMAGE_URL:
+            # 处理图片消息发送
+            image_path = reply.content
+            logger.debug(f"[WX849] 开始发送图片, {'URL' if reply.type == ReplyType.IMAGE_URL else '文件路径'}={image_path}")
             try:
-                pic_res = requests.get(img_url, stream=True)
-                # 使用临时文件保存图片
-                tmp_path = os.path.join(get_appdata_dir(), f"tmp_img_{int(time.time())}.png")
-                with open(tmp_path, 'wb') as f:
-                    for block in pic_res.iter_content(1024):
-                        f.write(block)
+                # 如果是图片URL，先下载图片
+                if reply.type == ReplyType.IMAGE_URL:
+                    # 下载图片
+                    img_res = requests.get(image_path, stream=True)
+                    # 创建临时文件保存图片
+                    tmp_path = os.path.join(get_appdata_dir(), f"tmp_img_{int(time.time())}.jpg")
+                    with open(tmp_path, 'wb') as f:
+                        for block in img_res.iter_content(1024):
+                            f.write(block)
+                    # 使用下载后的本地文件路径
+                    image_path = tmp_path
 
-                # 使用我们的自定义方法发送图片
-                result = loop.run_until_complete(self._send_image(receiver, tmp_path))
+                # 发送图片文件
+                result = loop.run_until_complete(self._send_image(receiver, image_path))
 
-                if result and isinstance(result, dict) and result.get("Success", False):
+                # 如果是URL类型，删除临时文件
+                if reply.type == ReplyType.IMAGE_URL:
+                    try:
+                        os.remove(tmp_path)
+                    except Exception as e:
+                        logger.debug(f"[WX849] 删除临时图片文件失败: {e}")
+
+                if result:
                     logger.info(f"[WX849] 发送图片成功: 接收者: {receiver}")
                 else:
-                    logger.warning(f"[WX849] 发送图片可能失败: 接收者: {receiver}, 结果: {result}")
-
-                # 删除临时文件
-                try:
-                    os.remove(tmp_path)
-                except Exception as e:
-                    logger.debug(f"[WX849] 删除临时图片文件失败: {e}")
+                    logger.warning(f"[WX849] 发送图片失败: 接收者: {receiver}")
             except Exception as e:
-                logger.error(f"[WX849] 发送图片失败: {e}")
+                logger.error(f"[WX849] 处理图片失败: {e}")
+                logger.error(traceback.format_exc())
 
         elif reply.type == ReplyType.VIDEO_URL:
             # 从网络下载视频并发送
@@ -1864,6 +2085,51 @@ class WX849Channel(ChatChannel):
                     logger.warning(f"[WX849] 发送视频失败: 接收者: {receiver}")
             except Exception as e:
                 logger.error(f"[WX849] 处理视频URL失败: {e}")
+                logger.error(traceback.format_exc())
+
+        elif reply.type == ReplyType.VOICE:
+            # 发送语音消息
+            voice_path = reply.content
+            logger.debug(f"[WX849] 开始发送语音, 文件路径={voice_path}")
+            try:
+                # 使用统一的语音发送方法，会自动处理短语音和长语音的分割
+                result = loop.run_until_complete(self._send_voice(receiver, voice_path))
+                if result:
+                    logger.info(f"[WX849] 发送语音成功: 接收者: {receiver}")
+                else:
+                    logger.warning(f"[WX849] 发送语音失败: 接收者: {receiver}")
+            except Exception as e:
+                logger.error(f"[WX849] 处理语音失败: {e}")
+                logger.error(traceback.format_exc())
+
+        elif reply.type == ReplyType.VOICE_URL:
+            # 从网络下载语音并发送
+            voice_url = reply.content
+            logger.debug(f"[WX849] 开始下载语音, url={voice_url}")
+            try:
+                # 下载语音文件
+                voice_res = requests.get(voice_url, stream=True)
+                # 使用临时文件保存语音
+                tmp_path = os.path.join(get_appdata_dir(), f"tmp_voice_{int(time.time())}.mp3")
+                with open(tmp_path, 'wb') as f:
+                    for block in voice_res.iter_content(1024):
+                        f.write(block)
+
+                # 使用统一的语音发送方法，会自动处理短语音和长语音的分割
+                result = loop.run_until_complete(self._send_voice(receiver, tmp_path))
+
+                if result:
+                    logger.info(f"[WX849] 发送语音成功: 接收者: {receiver}")
+                else:
+                    logger.warning(f"[WX849] 发送语音失败: 接收者: {receiver}")
+
+                # 删除临时文件
+                try:
+                    os.remove(tmp_path)
+                except Exception as e:
+                    logger.debug(f"[WX849] 删除临时语音文件失败: {e}")
+            except Exception as e:
+                logger.error(f"[WX849] 处理语音URL失败: {e}")
                 logger.error(traceback.format_exc())
 
         else:
@@ -2059,6 +2325,302 @@ class WX849Channel(ChatChannel):
             logger.error(traceback.format_exc())
             return None
 
+    async def _send_voice(self, to_user_id, voice_path):
+        """发送语音消息，如果语音时长超过30秒，会自动分割成多个片段发送"""
+        # 参数检查
+        if not to_user_id:
+            logger.error("[WX849] 发送语音失败: 接收者ID为空")
+            return None
+
+        if not voice_path or not os.path.exists(voice_path):
+            logger.error(f"[WX849] 发送语音失败: 语音文件不存在 - {voice_path}")
+            return None
+
+        # 创建临时目录和处理后的文件路径
+        tmp_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "tmp")
+        os.makedirs(tmp_dir, exist_ok=True)
+        processed_file = os.path.join(tmp_dir, f"voice_processed_{int(time.time())}.mp3")
+
+        result = None
+        try:
+            # 导入base64模块
+            import base64
+
+            # 查找ffmpeg可执行文件
+            ffmpeg_cmd = "ffmpeg"
+            if os.name == 'nt':
+                possible_paths = [
+                    r"C:\ffmpeg\bin\ffmpeg.exe",
+                    r"C:\Program Files\ffmpeg\bin\ffmpeg.exe",
+                    r"C:\Program Files (x86)\ffmpeg\bin\ffmpeg.exe"
+                ]
+                for path in possible_paths:
+                    if os.path.exists(path):
+                        ffmpeg_cmd = path
+                        break
+
+            # 使用ffmpeg处理音频文件
+            cmd = [
+                ffmpeg_cmd, "-y", "-i", voice_path,
+                "-acodec", "libmp3lame", "-ar", "44100", "-ab", "192k",
+                "-ac", "2", processed_file
+            ]
+
+            # 执行ffmpeg命令
+            logger.debug(f"[WX849] 处理音频文件: {' '.join(cmd)}")
+            result = subprocess.run(cmd, capture_output=True, text=True)
+
+            # 如果处理成功，使用处理后的文件；否则使用原始文件
+            voice_file = processed_file if result.returncode == 0 and os.path.exists(processed_file) else voice_path
+            logger.debug(f"[WX849] 使用音频文件: {voice_file}")
+
+            try:
+                # 使用pydub和pysilk处理音频
+                from pydub import AudioSegment
+                import pysilk
+                from io import BytesIO
+
+                # 读取音频文件
+                with open(voice_file, 'rb') as f:
+                    voice_data = f.read()
+
+                # 转换为AudioSegment
+                audio = AudioSegment.from_file(BytesIO(voice_data), format="mp3").set_channels(1)
+
+                # 获取最接近的支持的采样率
+                supported_rates = [8000, 12000, 16000, 24000]
+                closest_rate = min(supported_rates, key=lambda x: abs(x - audio.frame_rate))
+                audio = audio.set_frame_rate(closest_rate)
+
+                # 获取音频时长（毫秒）
+                total_duration = len(audio)
+                logger.debug(f"[WX849] 总音频时长: {total_duration}毫秒, 采样率: {audio.frame_rate}Hz")
+
+                # 最大语音片段时长（毫秒）
+                max_segment_duration = 20 * 1000  # 20秒，确保更可靠的发送
+
+                # 获取API配置
+                api_host = conf().get("wx849_api_host", "127.0.0.1")
+                api_port = conf().get("wx849_api_port", 9011)
+                protocol_version = conf().get("wx849_protocol_version", "849")
+
+                # 确定API路径前缀
+                if protocol_version == "855" or protocol_version == "ipad":
+                    api_path_prefix = "/api"
+                else:
+                    api_path_prefix = "/VXAPI"
+
+                # 使用 /VXAPI 前缀，与 WomenVoice 插件保持一致
+                api_path_prefix = "/VXAPI"
+
+                # 如果语音时长超过最大片段时长，将其分割成多个片段发送
+                if total_duration > max_segment_duration:
+                    logger.info(f"[WX849] 语音时长超过20秒 ({total_duration/1000:.1f}秒)，将分割成多个片段发送")
+
+                    # 计算需要分割的片段数
+                    segments_count = (total_duration + max_segment_duration - 1) // max_segment_duration
+                    logger.info(f"[WX849] 将分割成 {segments_count} 个片段")
+
+                    # 创建存放临时分段文件的目录
+                    segment_dir = os.path.join(tmp_dir, f"voice_segments_{int(time.time())}")
+                    os.makedirs(segment_dir, exist_ok=True)
+
+                    # 保存所有临时分段文件路径
+                    segment_files = []
+
+                    # 第一阶段：分割并保存所有片段
+                    logger.info(f"[WX849] 开始分割并保存所有语音片段")
+                    for i in range(segments_count):
+                        start_time = i * max_segment_duration
+                        end_time = min((i + 1) * max_segment_duration, total_duration)
+
+                        # 截取片段
+                        segment = audio[start_time:end_time]
+                        segment_duration = len(segment)
+
+                        # 保存片段到临时文件
+                        segment_file = os.path.join(segment_dir, f"segment_{i+1}.mp3")
+                        segment_files.append((segment_file, segment_duration))
+                        segment.export(segment_file, format="mp3")
+
+                        logger.debug(f"[WX849] 保存语音片段 {i+1}/{segments_count} 到: {segment_file}, 时长: {segment_duration/1000:.1f}秒")
+
+                    # 检查所有分段文件是否都已成功创建
+                    all_segments_exist = True
+                    for segment_file, _ in segment_files:
+                        if not os.path.exists(segment_file):
+                            logger.error(f"[WX849] 语音片段文件不存在: {segment_file}")
+                            all_segments_exist = False
+                            break
+
+                    if not all_segments_exist:
+                        logger.error(f"[WX849] 部分语音片段未能成功保存，取消发送")
+                        return None
+
+                    logger.info(f"[WX849] 所有 {len(segment_files)} 个语音片段已成功保存，开始发送")
+
+                    # 发送文本消息通知语音长度
+                    try:
+                        async with aiohttp.ClientSession() as session:
+                            text_url = f"http://{api_host}:{api_port}{api_path_prefix}/Msg/SendTxt"
+                            text_params = {
+                                "Wxid": self.wxid,
+                                "ToWxid": to_user_id,
+                                "Content": f"长语音消息 (总长{total_duration/1000:.1f}秒)，将分 {segments_count} 段发送..."
+                            }
+
+                            # 发送文本提示
+                            async with session.post(text_url, json=text_params, timeout=60) as text_response:
+                                text_json_resp = await text_response.json()
+                                if text_json_resp and text_json_resp.get("Success", False):
+                                    logger.info(f"[WX849] 发送语音分段通知成功")
+                    except Exception as e:
+                        logger.error(f"[WX849] 发送语音分段通知失败: {e}")
+
+                    # 第二阶段：发送所有已保存的片段
+                    success_count = 0
+                    for i, (segment_file, segment_duration) in enumerate(segment_files):
+                        try:
+                            # 按短语音方式处理分段文件
+                            # 读取文件数据
+                            with open(segment_file, 'rb') as f:
+                                segment_data = f.read()
+
+                            # 处理为音频对象
+                            segment_audio = AudioSegment.from_file(BytesIO(segment_data), format="mp3").set_channels(1)
+                            segment_audio = segment_audio.set_frame_rate(closest_rate)
+
+                            # 编码为SILK
+                            segment_silk_data = await pysilk.async_encode(segment_audio.raw_data, sample_rate=segment_audio.frame_rate)
+                            segment_base64 = base64.b64encode(segment_silk_data).decode('utf-8')
+
+                            # 准备API请求
+                            api_url = f"http://{api_host}:{api_port}{api_path_prefix}/Msg/SendVoice"
+                            params = {
+                                "Wxid": self.wxid,
+                                "ToWxid": to_user_id,
+                                "Base64": segment_base64,
+                                "Type": 4,  # SILK格式
+                                "VoiceTime": segment_duration
+                            }
+
+                            # 记录日志，隐藏base64数据
+                            debug_params = params.copy()
+                            debug_params["Base64"] = f"[Base64 data, length: {len(segment_base64)}]"
+                            logger.debug(f"[WX849] 语音片段 {i+1}/{segments_count} API参数: {json.dumps(debug_params, ensure_ascii=False)}")
+
+                            # 发送语音片段
+                            async with aiohttp.ClientSession() as session:
+                                async with session.post(api_url, json=params, timeout=60) as response:
+                                    json_resp = await response.json()
+
+                                    # 检查响应
+                                    if json_resp and json_resp.get("Success", False):
+                                        logger.info(f"[WX849] 语音片段 {i+1}/{segments_count} 发送成功")
+                                        success_count += 1
+
+                                        # 添加延迟，避免发送过快导致的问题
+                                        await asyncio.sleep(1.0)  # 增加延迟到1秒
+                                    else:
+                                        error_msg = json_resp.get("Message", "未知错误")
+                                        logger.error(f"[WX849] 语音片段 {i+1}/{segments_count} API返回错误: {error_msg}")
+                        except Exception as e:
+                            logger.error(f"[WX849] 发送语音片段 {i+1}/{segments_count} 失败: {e}")
+                            logger.error(traceback.format_exc())
+
+                    # 发送完成通知
+                    try:
+                        async with aiohttp.ClientSession() as session:
+                            text_url = f"http://{api_host}:{api_port}{api_path_prefix}/Msg/SendTxt"
+                            text_params = {
+                                "Wxid": self.wxid,
+                                "ToWxid": to_user_id,
+                                "Content": f"长语音发送完成，成功 {success_count}/{segments_count} 段"
+                            }
+
+                            # 发送文本提示
+                            async with session.post(text_url, json=text_params, timeout=60) as text_response:
+                                text_json_resp = await text_response.json()
+                                if text_json_resp and text_json_resp.get("Success", False):
+                                    logger.info(f"[WX849] 发送语音完成通知成功")
+                    except Exception as e:
+                        logger.error(f"[WX849] 发送语音完成通知失败: {e}")
+
+                    # 清理临时分段文件
+                    for segment_file, _ in segment_files:
+                        try:
+                            if os.path.exists(segment_file):
+                                os.remove(segment_file)
+                                logger.debug(f"[WX849] 已删除临时分段文件: {segment_file}")
+                        except Exception as e:
+                            logger.debug(f"[WX849] 删除临时分段文件失败: {e}")
+
+                    # 尝试删除分段目录
+                    try:
+                        if os.path.exists(segment_dir):
+                            os.rmdir(segment_dir)
+                            logger.debug(f"[WX849] 已删除临时分段目录: {segment_dir}")
+                    except Exception as e:
+                        logger.debug(f"[WX849] 删除临时分段目录失败: {e}")
+
+                    # 设置结果状态
+                    if success_count > 0:
+                        result = {"Success": True}
+                    else:
+                        result = None
+                else:
+                    # 语音时长不超过最大片段时长，直接发送
+                    logger.info(f"[WX849] 语音时长不超过20秒 ({total_duration/1000:.1f}秒)，直接发送")
+                    silk_data = await pysilk.async_encode(audio.raw_data, sample_rate=audio.frame_rate)
+                    voice_base64 = base64.b64encode(silk_data).decode('utf-8')
+
+                    api_url = f"http://{api_host}:{api_port}{api_path_prefix}/Msg/SendVoice"
+                    params = {
+                        "Wxid": self.wxid,
+                        "ToWxid": to_user_id,
+                        "Base64": voice_base64,
+                        "Type": 4,  # SILK格式
+                        "VoiceTime": total_duration
+                    }
+
+                    # 记录日志，隐藏base64数据
+                    debug_params = params.copy()
+                    debug_params["Base64"] = f"[Base64 data, length: {len(voice_base64)}]"
+                    logger.debug(f"[WX849] 语音API参数: {json.dumps(debug_params, ensure_ascii=False)}")
+
+                    # 发送请求
+                    async with aiohttp.ClientSession() as session:
+                        async with session.post(api_url, json=params, timeout=60) as response:
+                            json_resp = await response.json()
+
+                            # 检查响应
+                            if json_resp and json_resp.get("Success", False):
+                                logger.info(f"[WX849] 语音发送成功")
+                                result = {"Success": True}
+                            else:
+                                error_msg = json_resp.get("Message", "未知错误")
+                                logger.error(f"[WX849] 语音API返回错误: {error_msg}")
+                                logger.error(f"[WX849] 响应详情: {json.dumps(json_resp, ensure_ascii=False)}")
+                                result = None
+            except Exception as e:
+                logger.error(f"[WX849] 处理音频数据失败: {e}")
+                logger.error(traceback.format_exc())
+                result = None
+        except Exception as e:
+            logger.error(f"[WX849] 发送语音失败: {e}")
+            logger.error(traceback.format_exc())
+            result = None
+        finally:
+            # 删除处理后的临时文件
+            try:
+                if os.path.exists(processed_file):
+                    os.remove(processed_file)
+                    logger.debug(f"[WX849] 已删除临时文件: {processed_file}")
+            except Exception as e:
+                logger.debug(f"[WX849] 删除临时文件失败: {e}")
+
+        return result
+
     async def _send_video(self, to_user_id, video_base64, cover_base64=None, video_duration=10):
         """发送视频消息"""
         try:
@@ -2212,7 +2774,7 @@ class WX849Channel(ChatChannel):
             try:
                 # 获取API配置
                 api_host = conf().get("wx849_api_host", "127.0.0.1")
-                api_port = conf().get("wx849_api_port", 9000)
+                api_port = conf().get("wx849_api_port", 9011)
                 protocol_version = conf().get("wx849_protocol_version", "849")
 
                 # 确定API路径前缀
@@ -2413,7 +2975,7 @@ class WX849Channel(ChatChannel):
             try:
                 # 获取API配置
                 api_host = conf().get("wx849_api_host", "127.0.0.1")
-                api_port = conf().get("wx849_api_port", 9000)
+                api_port = conf().get("wx849_api_port", 9011)
                 protocol_version = conf().get("wx849_protocol_version", "849")
 
                 # 确定API路径前缀
@@ -2797,7 +3359,7 @@ class WX849Channel(ChatChannel):
             try:
                 # 获取API配置
                 api_host = conf().get("wx849_api_host", "127.0.0.1")
-                api_port = conf().get("wx849_api_port", 9000)
+                api_port = conf().get("wx849_api_port", 9011)
                 protocol_version = conf().get("wx849_protocol_version", "849")
 
                 # 确定API路径前缀
@@ -3360,6 +3922,204 @@ class WX849Channel(ChatChannel):
             logger.error(traceback.format_exc())
             return None
 
+    def _send_api_request(self, url, data):
+        """同步发送API请求"""
+        try:
+            # 设置请求头
+            headers = {
+                'Content-Type': 'application/json'
+            }
+
+            # 发送请求
+            response = requests.post(url, json=data, headers=headers, timeout=10)
+
+            # 检查响应状态码
+            if response.status_code != 200:
+                logger.error(f"[WX849] API请求失败: {url}, 状态码: {response.status_code}")
+                return None
+
+            # 解析响应
+            result = response.json()
+            return result
+        except Exception as e:
+            logger.error(f"[WX849] API请求失败: {url}, 错误: {e}")
+            return None
+
+    def _get_nickname_from_wxid(self, wxid):
+        """从wxid获取昵称"""
+        try:
+            # 检查是否是群ID
+            if wxid.endswith("@chatroom"):
+                # 尝试从群聊缓存中获取群名称
+                tmp_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "tmp")
+                chatrooms_file = os.path.join(tmp_dir, 'wx849_rooms.json')
+
+                if os.path.exists(chatrooms_file):
+                    try:
+                        with open(chatrooms_file, 'r', encoding='utf-8') as f:
+                            chatrooms_info = json.load(f)
+
+                        if wxid in chatrooms_info and "nickName" in chatrooms_info[wxid]:
+                            return chatrooms_info[wxid]["nickName"]
+                    except Exception as e:
+                        logger.debug(f"[WX849] 从缓存获取群名称失败: {e}")
+
+                # 如果没有找到，返回默认值
+                return "群聊"
+
+            # 检查是否是个人ID
+            # 首先尝试从群成员列表中获取昵称
+            tmp_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "tmp")
+            chatrooms_file = os.path.join(tmp_dir, 'wx849_rooms.json')
+
+            if os.path.exists(chatrooms_file):
+                try:
+                    with open(chatrooms_file, 'r', encoding='utf-8') as f:
+                        chatrooms_info = json.load(f)
+
+                    # 遍历所有群聊
+                    for group_id, group_info in chatrooms_info.items():
+                        if "members" in group_info:
+                            # 遍历群成员
+                            for member in group_info["members"]:
+                                if member.get("UserName") == wxid:
+                                    # 优先使用群内显示名称(群昵称)
+                                    if member.get("DisplayName"):
+                                        logger.debug(f"[WX849] 从群成员列表获取到用户 {wxid} 的群昵称: {member.get('DisplayName')}")
+                                        return member.get("DisplayName")
+                                    # 次选使用个人昵称
+                                    elif member.get("NickName"):
+                                        logger.debug(f"[WX849] 从群成员列表获取到用户 {wxid} 的昵称: {member.get('NickName')}")
+                                        return member.get("NickName")
+                except Exception as e:
+                    logger.debug(f"[WX849] 从群成员列表获取昵称失败: {e}")
+
+            # 如果在群成员列表中没有找到，尝试从联系人缓存中获取昵称
+            contacts_file = os.path.join(tmp_dir, 'wx849_contacts.json')
+
+            if os.path.exists(contacts_file):
+                try:
+                    with open(contacts_file, 'r', encoding='utf-8') as f:
+                        contacts_info = json.load(f)
+
+                    for contact in contacts_info:
+                        if contact.get("wxid") == wxid and contact.get("nickname"):
+                            logger.debug(f"[WX849] 从联系人列表获取到用户 {wxid} 的昵称: {contact.get('nickname')}")
+                            return contact.get("nickname")
+                except Exception as e:
+                    logger.debug(f"[WX849] 从缓存获取联系人昵称失败: {e}")
+
+            # 如果是机器人自己的wxid，返回机器人昵称
+            if wxid == self.wxid and hasattr(self, "name") and self.name:
+                return self.name
+
+            # 如果没有找到，尝试使用上下文中的昵称
+            if hasattr(self, "context_nicknames") and wxid in self.context_nicknames:
+                return self.context_nicknames[wxid]
+
+            # 如果都没有找到，返回"用户"作为默认值
+            return "用户"
+
+        except Exception as e:
+            logger.error(f"[WX849] 获取昵称失败: {e}")
+            return "用户"
+
+    async def _send_api_request(self, endpoint, params):
+        """异步发送API请求"""
+        try:
+            # 获取API配置
+            api_host = conf().get("wx849_api_host", "127.0.0.1")
+            api_port = conf().get("wx849_api_port", 9011)
+            protocol_version = conf().get("wx849_protocol_version", "849")
+
+            # 确定API路径前缀
+            if protocol_version == "855" or protocol_version == "ipad":
+                api_path_prefix = "/api"
+            else:
+                api_path_prefix = "/VXAPI"
+
+            # 构建完整的API URL
+            url = f"http://{api_host}:{api_port}{api_path_prefix}{endpoint}"
+            logger.debug(f"[WX849] 发送API请求: {url}")
+            logger.debug(f"[WX849] 请求参数: {json.dumps(params, ensure_ascii=False)}")
+
+            # 发送POST请求
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, json=params) as response:
+                    if response.status == 200:
+                        result = await response.json()
+                        logger.debug(f"[WX849] API响应: {json.dumps(result, ensure_ascii=False)}")
+                        return result
+                    else:
+                        logger.error(f"[WX849] API请求失败: {url}, 状态码: {response.status}")
+                        return None
+        except Exception as e:
+            logger.error(f"[WX849] API请求失败: {endpoint}, 错误: {e}")
+            return None
+
+    async def _get_group_members(self, group_id):
+        """获取群成员列表"""
+        try:
+            # 调用API获取群成员详情
+            params = {
+                "QID": group_id,  # 群ID参数
+                "Wxid": self.wxid  # 自己的wxid参数
+            }
+
+            # 发送API请求
+            result = await self._send_api_request("/Group/GetChatRoomMemberDetail", params)
+
+            if not result or not isinstance(result, dict):
+                logger.error(f"[WX849] 获取群成员列表失败: 无效响应")
+                return None
+
+            # 检查响应是否成功
+            if not result.get("Success", False):
+                logger.error(f"[WX849] 获取群成员列表失败: {result.get('Message', '未知错误')}")
+                return None
+
+            # 提取成员信息
+            data = result.get("Data", {})
+            new_chatroom_data = data.get("NewChatroomData", {})
+
+            if not new_chatroom_data:
+                logger.error(f"[WX849] 获取群成员列表失败: 响应中无NewChatroomData")
+                return None
+
+            # 提取成员列表
+            member_count = new_chatroom_data.get("MemberCount", 0)
+            chat_room_members = new_chatroom_data.get("ChatRoomMember", [])
+
+            # 确保是有效的成员列表
+            if not isinstance(chat_room_members, list):
+                logger.error(f"[WX849] 获取群成员列表失败: 成员列表格式无效")
+                return None
+
+            # 处理成员信息
+            members = []
+            for member in chat_room_members:
+                if isinstance(member, dict):
+                    # 直接获取字符串值，不假设是嵌套字典
+                    wxid = member.get("UserName", "")
+                    nickname = member.get("NickName", "")
+                    display_name = member.get("DisplayName", "")
+
+                    # 使用显示名称（群昵称）如果有，否则使用昵称
+                    name = display_name if display_name else nickname
+
+                    if wxid:
+                        members.append({
+                            "wxid": wxid,
+                            "nickname": name
+                        })
+
+            logger.debug(f"[WX849] 成功获取群 {group_id} 的成员列表，共 {len(members)} 人")
+            return members
+
+        except Exception as e:
+            logger.error(f"[WX849] 获取群成员列表失败: {e}")
+            return None
+
     async def _get_group_member_details(self, group_id):
         """获取群成员详情"""
         try:
@@ -3407,7 +4167,7 @@ class WX849Channel(ChatChannel):
             try:
                 # 获取API配置
                 api_host = conf().get("wx849_api_host", "127.0.0.1")
-                api_port = conf().get("wx849_api_port", 9000)
+                api_port = conf().get("wx849_api_port", 9011)
                 protocol_version = conf().get("wx849_protocol_version", "849")
 
                 # 确定API路径前缀
@@ -3421,25 +4181,19 @@ class WX849Channel(ChatChannel):
                 logger.debug(f"[WX849] 正在请求群成员详情API: {api_url}")
                 logger.debug(f"[WX849] 请求参数: {json.dumps(params, ensure_ascii=False)}")
 
-                # 调用API获取群成员详情
-                response = await self._call_api("/Group/GetChatRoomMemberDetail", params)
+                # 使用新的_get_group_members方法获取群成员
+                members_data = await self._get_group_members(group_id)
 
-                if not response or not isinstance(response, dict):
-                    logger.error(f"[WX849] 获取群成员详情失败: 无效响应")
+                if not members_data:
+                    logger.error(f"[WX849] 获取群成员详情失败: 无法获取成员列表")
                     return None
 
-                # 检查响应是否成功
-                if not response.get("Success", False):
-                    logger.error(f"[WX849] 获取群成员详情失败: {response.get('Message', '未知错误')}")
-                    return None
-
-                # 提取NewChatroomData
-                data = response.get("Data", {})
-                new_chatroom_data = data.get("NewChatroomData", {})
-
-                if not new_chatroom_data:
-                    logger.error(f"[WX849] 获取群成员详情失败: 响应中无NewChatroomData")
-                    return None
+                # 构建新的chatroom_data结构
+                new_chatroom_data = {
+                    "ChatRoomName": group_id,
+                    "MemberCount": len(members_data),
+                    "ChatRoomMember": members_data
+                }
 
                 # 检查当前群聊是否已存在
                 if group_id not in chatrooms_info:
@@ -3466,18 +4220,8 @@ class WX849Channel(ChatChannel):
                     if not isinstance(member, dict):
                         continue
 
-                    # 提取成员必要信息
-                    member_info = {
-                        "UserName": member.get("UserName", ""),
-                        "NickName": member.get("NickName", ""),
-                        "DisplayName": member.get("DisplayName", ""),
-                        "ChatroomMemberFlag": member.get("ChatroomMemberFlag", 0),
-                        "InviterUserName": member.get("InviterUserName", ""),
-                        "BigHeadImgUrl": member.get("BigHeadImgUrl", ""),
-                        "SmallHeadImgUrl": member.get("SmallHeadImgUrl", "")
-                    }
-
-                    members.append(member_info)
+                    # 提取成员必要信息，直接使用原始成员信息
+                    members.append(member)
 
                 # 更新群聊信息
                 chatrooms_info[group_id]["members"] = members
@@ -3515,7 +4259,7 @@ class WX849Channel(ChatChannel):
         try:
             # 获取API配置
             api_host = conf().get("wx849_api_host", "127.0.0.1")
-            api_port = conf().get("wx849_api_port", 9000)
+            api_port = conf().get("wx849_api_port", 9011)
             protocol_version = conf().get("wx849_protocol_version", "849")
 
             # 确定API路径前缀
@@ -3753,7 +4497,7 @@ class WX849Channel(ChatChannel):
             try:
                 # 获取API配置
                 api_host = conf().get("wx849_api_host", "127.0.0.1")
-                api_port = conf().get("wx849_api_port", 9000)
+                api_port = conf().get("wx849_api_port", 9011)
                 protocol_version = conf().get("wx849_protocol_version", "849")
 
                 # 确定API路径前缀
@@ -3986,8 +4730,20 @@ class WX849Channel(ChatChannel):
                 # 设置is_at标志，与gewechat保持一致
                 if hasattr(msg, 'is_at'):
                     context["is_at"] = msg.is_at
+                elif hasattr(msg, 'at_list') and self.wxid in msg.at_list:
+                    context["is_at"] = True
+                    logger.debug(f"[WX849] 从at_list中检测到@机器人: {self.wxid}")
+                # 检查是否有IsAtMessage标志
+                elif hasattr(msg, 'msg') and "IsAtMessage" in msg.msg and msg.msg["IsAtMessage"]:
+                    context["is_at"] = True
+                    logger.debug(f"[WX849] 从IsAtMessage标志检测到@机器人")
                 else:
                     context["is_at"] = False
+
+                # 记录at_list到上下文
+                if hasattr(msg, 'at_list') and msg.at_list:
+                    context["at_list"] = msg.at_list
+                    logger.debug(f"[WX849] 设置at_list到上下文: {msg.at_list}")
 
                 # 设置session_id为群ID
                 context["session_id"] = msg.from_user_id
@@ -4096,9 +4852,130 @@ class WX849Channel(ChatChannel):
                             else:
                                 return member_wxid
 
-            # 如果缓存中没有，启动一个后台任务获取群成员，但本次先返回wxid
-            logger.debug(f"[WX849] 未找到成员 {member_wxid} 的昵称信息，启动更新任务")
-            threading.Thread(target=lambda: asyncio.run(self._get_group_member_details(group_id))).start()
+            # 如果缓存中没有，尝试立即获取群成员信息
+            logger.debug(f"[WX849] 未找到成员 {member_wxid} 的昵称信息，尝试立即获取")
+
+            # 获取API配置
+            api_host = conf().get("wx849_api_host", "127.0.0.1")
+            api_port = conf().get("wx849_api_port", 9011)
+            protocol_version = conf().get("wx849_protocol_version", "849")
+
+            # 确定API路径前缀
+            if protocol_version == "855" or protocol_version == "ipad":
+                api_path_prefix = "/api"
+            else:
+                api_path_prefix = "/VXAPI"
+
+            # 构建API请求参数
+            params = {
+                "QID": group_id,
+                "Wxid": self.wxid
+            }
+
+            # 构建完整的API URL用于日志
+            api_url = f"http://{api_host}:{api_port}{api_path_prefix}/Group/GetChatRoomMemberDetail"
+            logger.debug(f"[WX849] 正在请求群成员详情API: {api_url}")
+            logger.debug(f"[WX849] 请求参数: {json.dumps(params, ensure_ascii=False)}")
+
+            # 调用API获取群成员详情
+            response = await self._call_api("/Group/GetChatRoomMemberDetail", params)
+
+            if not response or not isinstance(response, dict):
+                logger.error(f"[WX849] 获取群成员详情失败: 无效响应")
+                return member_wxid
+
+            # 检查响应是否成功
+            if not response.get("Success", False):
+                logger.error(f"[WX849] 获取群成员详情失败: {response.get('Message', '未知错误')}")
+                return member_wxid
+
+            # 提取群成员详情
+            data = response.get("Data", {})
+            if not data:
+                logger.error(f"[WX849] 获取群成员详情失败: 响应中无Data")
+                return member_wxid
+
+            # 提取NewChatroomData
+            new_chatroom_data = data.get("NewChatroomData", {})
+            if not new_chatroom_data:
+                logger.error(f"[WX849] 获取群成员列表失败: 响应中无NewChatroomData")
+                return member_wxid
+
+            # 提取成员列表
+            chat_room_members = new_chatroom_data.get("ChatRoomMember", [])
+
+            # 确保是有效的成员列表
+            if not isinstance(chat_room_members, list):
+                logger.error(f"[WX849] 获取群成员详情失败: ChatRoomMember不是有效的列表")
+                return member_wxid
+
+            # 更新群聊成员信息
+            members = []
+            for member in chat_room_members:
+                if not isinstance(member, dict):
+                    continue
+
+                # 提取成员必要信息，直接使用原始成员信息
+                members.append(member)
+
+                # 检查是否是要查找的成员
+                if member.get("UserName") == member_wxid:
+                    # 优先使用群内显示名称(群昵称)
+                    if member.get("DisplayName"):
+                        logger.debug(f"[WX849] 获取到成员 {member_wxid} 的群昵称: {member.get('DisplayName')}")
+                        nickname = member.get("DisplayName")
+                    # 次选使用个人昵称
+                    elif member.get("NickName"):
+                        logger.debug(f"[WX849] 获取到成员 {member_wxid} 的昵称: {member.get('NickName')}")
+                        nickname = member.get("NickName")
+                    else:
+                        nickname = member_wxid
+
+            # 更新群聊信息
+            if os.path.exists(chatrooms_file):
+                try:
+                    with open(chatrooms_file, 'r', encoding='utf-8') as f:
+                        chatrooms_info = json.load(f)
+                except Exception as e:
+                    logger.error(f"[WX849] 加载现有群聊信息失败: {str(e)}")
+                    chatrooms_info = {}
+            else:
+                chatrooms_info = {}
+
+            if group_id not in chatrooms_info:
+                chatrooms_info[group_id] = {
+                    "chatroomId": group_id,
+                    "nickName": group_id,
+                    "chatRoomOwner": "",
+                    "members": [],
+                    "last_update": int(time.time())
+                }
+
+            # 更新群聊成员信息
+            chatrooms_info[group_id]["members"] = members
+            chatrooms_info[group_id]["last_update"] = int(time.time())
+
+            # 保存到文件
+            with open(chatrooms_file, 'w', encoding='utf-8') as f:
+                json.dump(chatrooms_info, f, ensure_ascii=False, indent=2)
+
+            logger.info(f"[WX849] 已更新群聊 {group_id} 成员信息，成员数: {len(members)}")
+
+            # 再次尝试查找成员昵称
+            for member in members:
+                if member.get("UserName") == member_wxid:
+                    # 优先使用群内显示名称(群昵称)
+                    if member.get("DisplayName"):
+                        logger.debug(f"[WX849] 获取到成员 {member_wxid} 的群昵称: {member.get('DisplayName')}")
+                        return member.get("DisplayName")
+                    # 次选使用个人昵称
+                    elif member.get("NickName"):
+                        logger.debug(f"[WX849] 获取到成员 {member_wxid} 的昵称: {member.get('NickName')}")
+                        return member.get("NickName")
+                    else:
+                        return member_wxid
+
+            # 如果仍然找不到，返回wxid
             return member_wxid
         except Exception as e:
             logger.error(f"[WX849] 获取群成员昵称失败: {e}")
@@ -4112,7 +4989,7 @@ class WX849Channel(ChatChannel):
 
             # 获取API配置
             api_host = conf().get("wx849_api_host", "127.0.0.1")
-            api_port = conf().get("wx849_api_port", 9000)
+            api_port = conf().get("wx849_api_port", 9011)
             protocol_version = conf().get("wx849_protocol_version", "849")
 
             # 确定API路径前缀
@@ -4226,7 +5103,7 @@ class WX849Channel(ChatChannel):
 
             # 获取API配置
             api_host = conf().get("wx849_api_host", "127.0.0.1")
-            api_port = conf().get("wx849_api_port", 9000)
+            api_port = conf().get("wx849_api_port", 9011)
             protocol_version = conf().get("wx849_protocol_version", "849")
 
             # 确定API路径前缀
@@ -4327,3 +5204,116 @@ class WX849Channel(ChatChannel):
         except Exception as e:
             logger.error(f"[WX849] 更新联系人信息缓存失败: {e}")
             logger.error(f"[WX849] 详细错误: {traceback.format_exc()}")
+
+    def reply(self, reply: Reply, context: Context = None):
+        """回复消息的统一处理函数"""
+        if reply.type in self.NOT_SUPPORT_REPLYTYPE:
+            logger.warning(f"[WX849] 暂不支持回复类型: {reply.type}")
+            return
+
+        receiver = context["receiver"] if context and "receiver" in context else ""
+        if not receiver:
+            logger.error("[WX849] 回复失败: 接收者为空")
+            return
+
+        # 创建简单的事件循环，用于执行异步任务
+        loop = asyncio.new_event_loop()
+
+        if reply.type == ReplyType.TEXT:
+            # 发送文本消息
+            logger.debug(f"[WX849] 开始发送文本消息: {reply.content}")
+            try:
+                # 发送文本
+                result = loop.run_until_complete(self._send_text_message(receiver, reply.content))
+                if result:
+                    logger.info(f"[WX849] 发送文本成功: 接收者: {receiver}, 内容: {reply.content[:20]}...")
+                else:
+                    logger.warning(f"[WX849] 发送文本失败: 接收者: {receiver}, 内容: {reply.content[:20]}...")
+            except Exception as e:
+                logger.error(f"[WX849] 发送文本失败: {e}")
+                logger.error(traceback.format_exc())
+
+        elif reply.type == ReplyType.IMAGE or reply.type == ReplyType.IMAGE_URL:
+            # 处理图片消息发送
+            image_path = reply.content
+            logger.debug(f"[WX849] 开始发送图片, {'URL' if reply.type == ReplyType.IMAGE_URL else '文件路径'}={image_path}")
+            try:
+                # 如果是图片URL，先下载图片
+                if reply.type == ReplyType.IMAGE_URL:
+                    # 下载图片
+                    img_res = requests.get(image_path, stream=True)
+                    # 创建临时文件保存图片
+                    tmp_path = os.path.join(get_appdata_dir(), f"tmp_img_{int(time.time())}.jpg")
+                    with open(tmp_path, 'wb') as f:
+                        for block in img_res.iter_content(1024):
+                            f.write(block)
+                    # 使用下载后的本地文件路径
+                    image_path = tmp_path
+
+                # 发送图片文件
+                result = loop.run_until_complete(self._send_image(receiver, image_path))
+
+                # 如果是URL类型，删除临时文件
+                if reply.type == ReplyType.IMAGE_URL:
+                    try:
+                        os.remove(tmp_path)
+                    except Exception as e:
+                        logger.debug(f"[WX849] 删除临时图片文件失败: {e}")
+
+                if result:
+                    logger.info(f"[WX849] 发送图片成功: 接收者: {receiver}")
+                else:
+                    logger.warning(f"[WX849] 发送图片失败: 接收者: {receiver}")
+            except Exception as e:
+                logger.error(f"[WX849] 处理图片失败: {e}")
+                logger.error(traceback.format_exc())
+
+        elif reply.type == ReplyType.VOICE:
+            # 发送语音消息
+            voice_path = reply.content
+            logger.debug(f"[WX849] 开始发送语音, 文件路径={voice_path}")
+            try:
+                # 使用统一的语音发送方法，会自动处理短语音和长语音的分割
+                result = loop.run_until_complete(self._send_voice(receiver, voice_path))
+                if result:
+                    logger.info(f"[WX849] 发送语音成功: 接收者: {receiver}")
+                else:
+                    logger.warning(f"[WX849] 发送语音失败: 接收者: {receiver}")
+            except Exception as e:
+                logger.error(f"[WX849] 处理语音失败: {e}")
+                logger.error(traceback.format_exc())
+
+        elif reply.type == ReplyType.VOICE_URL:
+            # 从网络下载语音并发送
+            voice_url = reply.content
+            logger.debug(f"[WX849] 开始下载语音, url={voice_url}")
+            try:
+                # 下载语音文件
+                voice_res = requests.get(voice_url, stream=True)
+                # 使用临时文件保存语音
+                tmp_path = os.path.join(get_appdata_dir(), f"tmp_voice_{int(time.time())}.mp3")
+                with open(tmp_path, 'wb') as f:
+                    for block in voice_res.iter_content(1024):
+                        f.write(block)
+
+                # 使用统一的语音发送方法，会自动处理短语音和长语音的分割
+                result = loop.run_until_complete(self._send_voice(receiver, tmp_path))
+
+                if result:
+                    logger.info(f"[WX849] 发送语音成功: 接收者: {receiver}")
+                else:
+                    logger.warning(f"[WX849] 发送语音失败: 接收者: {receiver}")
+
+                # 删除临时文件
+                try:
+                    os.remove(tmp_path)
+                except Exception as e:
+                    logger.debug(f"[WX849] 删除临时语音文件失败: {e}")
+            except Exception as e:
+                logger.error(f"[WX849] 处理语音URL失败: {e}")
+                logger.error(traceback.format_exc())
+
+        else:
+            logger.warning(f"[WX849] 不支持的回复类型: {reply.type}")
+
+        loop.close()
