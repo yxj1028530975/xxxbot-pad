@@ -262,7 +262,7 @@ XXXBot 是一个基于微信的智能机器人系统，通过整合多种 API �
      **然后启动主服务**：
 
    ```bash
-   python app.py
+   python main.py
    ```
 
    ### 💻 Linux 用户
