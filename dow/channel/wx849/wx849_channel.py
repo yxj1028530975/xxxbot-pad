@@ -1037,10 +1037,21 @@ class WX849Channel(ChatChannel):
                             logger.debug(f"[WX849] 群聊发送者从字段提取({key}): {cmsg.sender_wxid}")
                             break
 
+                # 方法5: 尝试从SenderWxid字段提取
+                if not sender_extracted and "SenderWxid" in cmsg.msg and cmsg.msg["SenderWxid"]:
+                    cmsg.sender_wxid = str(cmsg.msg["SenderWxid"])
+                    sender_extracted = True
+                    logger.debug(f"[WX849] 群聊发送者从SenderWxid提取: {cmsg.sender_wxid}")
+
                 # 如果仍然无法提取，设置为默认值但不要留空
                 if not sender_extracted or not cmsg.sender_wxid:
-                    cmsg.sender_wxid = f"未知用户_{cmsg.from_user_id}"
-                    logger.debug(f"[WX849] 无法提取群聊发送者，使用默认值: {cmsg.sender_wxid}")
+                    # 检查原始消息中是否有SenderWxid字段
+                    if hasattr(cmsg, 'raw_msg') and isinstance(cmsg.raw_msg, dict) and "SenderWxid" in cmsg.raw_msg:
+                        cmsg.sender_wxid = str(cmsg.raw_msg["SenderWxid"])
+                        logger.debug(f"[WX849] 从原始消息中提取SenderWxid: {cmsg.sender_wxid}")
+                    else:
+                        cmsg.sender_wxid = f"未知用户_{cmsg.from_user_id}"
+                        logger.debug(f"[WX849] 无法提取群聊发送者，使用默认值: {cmsg.sender_wxid}")
 
                 # 设置other_user_id为群ID，确保它不为None
                 cmsg.other_user_id = cmsg.from_user_id
@@ -1058,6 +1069,31 @@ class WX849Channel(ChatChannel):
             # 确保other_user_id设置为群ID
             cmsg.other_user_id = cmsg.from_user_id
 
+            # 设置other_user_nickname为群名称，与gewechat保持一致
+            # 启动异步任务获取群名称并更新other_user_nickname
+            threading.Thread(target=lambda: asyncio.run(self._update_group_nickname_async(cmsg))).start()
+
+            # 处理@消息，与gewechat保持一致
+            # 优先从MsgSource的XML中解析是否被at
+            msg_source = cmsg.msg.get('MsgSource', '')
+            cmsg.is_at = False
+            xml_parsed = False
+            if msg_source:
+                try:
+                    root = ET.fromstring(msg_source)
+                    atuserlist_elem = root.find('atuserlist')
+                    if atuserlist_elem is not None and atuserlist_elem.text:
+                        cmsg.is_at = self.wxid in atuserlist_elem.text
+                        xml_parsed = True
+                        logger.debug(f"[WX849] 从XML解析是否被at: {cmsg.is_at}")
+                except ET.ParseError:
+                    pass
+
+            # 只有在XML解析失败时才从PushContent中判断
+            if not xml_parsed:
+                cmsg.is_at = '在群聊中@了你' in cmsg.msg.get('PushContent', '')
+                logger.debug(f"[WX849] 从PushContent解析是否被at: {cmsg.is_at}")
+
             logger.debug(f"[WX849] 设置实际发送者信息: actual_user_id={cmsg.actual_user_id}, actual_user_nickname={cmsg.actual_user_nickname}")
         else:
             # 私聊消息
@@ -1066,12 +1102,17 @@ class WX849Channel(ChatChannel):
 
             # 私聊消息也设置actual_user_id和actual_user_nickname
             cmsg.actual_user_id = cmsg.from_user_id
+            cmsg.other_user_id = cmsg.from_user_id
 
             # 检查是否有发送者昵称
             if hasattr(cmsg, 'sender_nickname') and cmsg.sender_nickname:
                 cmsg.actual_user_nickname = cmsg.sender_nickname
             else:
                 cmsg.actual_user_nickname = cmsg.from_user_id
+
+            # 设置other_user_nickname为联系人昵称，与gewechat保持一致
+            # 启动异步任务获取联系人昵称并更新other_user_nickname
+            threading.Thread(target=lambda: asyncio.run(self._update_contact_nickname_async(cmsg))).start()
 
             logger.debug(f"[WX849] 设置私聊发送者信息: actual_user_id={cmsg.actual_user_id}, actual_user_nickname={cmsg.actual_user_nickname}")
 
@@ -1082,6 +1123,22 @@ class WX849Channel(ChatChannel):
             if nickname and nickname != cmsg.actual_user_nickname:
                 cmsg.actual_user_nickname = nickname
                 logger.debug(f"[WX849] 异步更新了发送者昵称: {nickname}")
+
+    async def _update_group_nickname_async(self, cmsg):
+        """异步更新群名称信息，与gewechat保持一致"""
+        if cmsg.is_group and cmsg.from_user_id.endswith("@chatroom"):
+            group_name = await self._get_group_name(cmsg.from_user_id)
+            if group_name and group_name != cmsg.other_user_nickname:
+                cmsg.other_user_nickname = group_name
+                logger.debug(f"[WX849] 异步更新了群名称: {group_name}")
+
+    async def _update_contact_nickname_async(self, cmsg):
+        """异步更新联系人昵称信息，与gewechat保持一致"""
+        if not cmsg.is_group:
+            contact_name = await self._get_contact_name(cmsg.from_user_id)
+            if contact_name and contact_name != cmsg.other_user_nickname:
+                cmsg.other_user_nickname = contact_name
+                logger.debug(f"[WX849] 异步更新了联系人昵称: {contact_name}")
 
     def _process_text_message(self, cmsg):
         """处理文本消息"""
@@ -2679,6 +2736,194 @@ class WX849Channel(ChatChannel):
             logger.error(f"[WX849] 详细错误: {traceback.format_exc()}")
             return member_wxid
 
+    async def _get_contact_name(self, contact_id):
+        """获取联系人昵称，与gewechat保持一致"""
+        if not contact_id or contact_id.endswith("@chatroom"):
+            return contact_id
+
+        try:
+            # 优先从缓存获取联系人信息
+            cache_key = f"contact_name_{contact_id}"
+            if hasattr(self, "contact_name_cache") and cache_key in self.contact_name_cache:
+                cached_name = self.contact_name_cache[cache_key]
+                logger.debug(f"[WX849] 从缓存中获取联系人昵称: {cached_name}")
+                return cached_name
+
+            # 检查文件中是否已经有联系人信息，且未过期
+            tmp_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "tmp")
+            if not os.path.exists(tmp_dir):
+                os.makedirs(tmp_dir)
+
+            contacts_file = os.path.join(tmp_dir, 'wx849_contacts.json')
+
+            # 设定缓存有效期为24小时(86400秒)
+            cache_expiry = 86400
+            current_time = int(time.time())
+
+            if os.path.exists(contacts_file):
+                try:
+                    with open(contacts_file, 'r', encoding='utf-8') as f:
+                        contacts_info = json.load(f)
+
+                    # 检查联系人信息是否存在且未过期
+                    if (contact_id in contacts_info and
+                        "NickName" in contacts_info[contact_id] and
+                        contacts_info[contact_id]["NickName"] and
+                        contacts_info[contact_id]["NickName"] != contact_id and
+                        "last_update" in contacts_info[contact_id] and
+                        current_time - contacts_info[contact_id]["last_update"] < cache_expiry):
+
+                        # 从文件中获取联系人昵称
+                        contact_name = contacts_info[contact_id]["NickName"]
+                        logger.debug(f"[WX849] 从文件缓存中获取联系人昵称: {contact_name}")
+
+                        # 缓存联系人昵称
+                        if not hasattr(self, "contact_name_cache"):
+                            self.contact_name_cache = {}
+                        self.contact_name_cache[cache_key] = contact_name
+
+                        return contact_name
+                except Exception as e:
+                    logger.error(f"[WX849] 从文件获取联系人昵称出错: {e}")
+
+            logger.debug(f"[WX849] 联系人 {contact_id} 信息不存在或已过期，需要从API获取")
+
+            # 调用API获取联系人信息
+            params = {
+                "Wxid": self.wxid,
+                "ToWxid": contact_id
+            }
+
+            try:
+                # 获取API配置
+                api_host = conf().get("wx849_api_host", "127.0.0.1")
+                api_port = conf().get("wx849_api_port", 9000)
+                protocol_version = conf().get("wx849_protocol_version", "849")
+
+                # 确定API路径前缀
+                if protocol_version == "855" or protocol_version == "ipad":
+                    api_path_prefix = "/api"
+                else:
+                    api_path_prefix = "/VXAPI"
+
+                # 构建完整的API URL用于日志
+                api_url = f"http://{api_host}:{api_port}{api_path_prefix}/Friend/GetContractDetail"
+                logger.debug(f"[WX849] 正在请求联系人详情API: {api_url}")
+
+                # 准备请求参数
+                params = {
+                    "Wxid": self.wxid,
+                    "Towxids": contact_id,
+                    "ChatRoom": ""
+                }
+
+                logger.debug(f"[WX849] 请求参数: {json.dumps(params, ensure_ascii=False)}")
+
+                # 尝试使用联系人详情API
+                contact_detail_response = await self._call_api("/Friend/GetContractDetail", params)
+
+                # 从联系人详情中提取信息
+                contact_info = None
+                if contact_detail_response and isinstance(contact_detail_response, dict) and contact_detail_response.get("Success", False):
+                    data = contact_detail_response.get("Data", {})
+                    if data:
+                        contact_info = data
+
+                # 保存联系人详情到统一的JSON文件
+                try:
+                    # 读取现有的联系人信息（如果存在）
+                    contacts_info = {}
+                    if os.path.exists(contacts_file):
+                        try:
+                            with open(contacts_file, 'r', encoding='utf-8') as f:
+                                contacts_info = json.load(f)
+                            logger.debug(f"[WX849] 已加载 {len(contacts_info)} 个现有联系人信息")
+                        except Exception as e:
+                            logger.error(f"[WX849] 加载现有联系人信息失败: {str(e)}")
+
+                    # 提取必要的联系人信息
+                    if contact_info and isinstance(contact_info, dict):
+                        # 递归函数用于查找特定key的值
+                        def find_value(obj, key):
+                            # 如果是字典
+                            if isinstance(obj, dict):
+                                # 直接检查当前字典
+                                if key in obj:
+                                    return obj[key]
+                                # 检查带有"string"嵌套的字典
+                                if key in obj and isinstance(obj[key], dict) and "string" in obj[key]:
+                                    return obj[key]["string"]
+                                # 递归检查字典的所有值
+                                for k, v in obj.items():
+                                    result = find_value(v, key)
+                                    if result is not None:
+                                        return result
+                            # 如果是列表
+                            elif isinstance(obj, list):
+                                # 递归检查列表的所有项
+                                for item in obj:
+                                    result = find_value(item, key)
+                                    if result is not None:
+                                        return result
+                            return None
+
+                        # 尝试提取联系人昵称及其他信息
+                        contact_name = None
+
+                        # 首先尝试从NickName中获取
+                        nickname_obj = find_value(contact_info, "NickName")
+                        if isinstance(nickname_obj, dict) and "string" in nickname_obj:
+                            contact_name = nickname_obj["string"]
+                        elif isinstance(nickname_obj, str):
+                            contact_name = nickname_obj
+
+                        # 如果没找到，尝试其他可能的字段
+                        if not contact_name:
+                            for name_key in ["nickname", "name", "DisplayName"]:
+                                name_value = find_value(contact_info, name_key)
+                                if name_value:
+                                    if isinstance(name_value, dict) and "string" in name_value:
+                                        contact_name = name_value["string"]
+                                    elif isinstance(name_value, str):
+                                        contact_name = name_value
+                                    if contact_name:
+                                        break
+
+                        # 如果找到了联系人昵称，更新缓存
+                        if contact_name:
+                            # 更新联系人信息
+                            if contact_id not in contacts_info:
+                                contacts_info[contact_id] = {}
+
+                            contacts_info[contact_id]["NickName"] = contact_name
+                            contacts_info[contact_id]["last_update"] = current_time
+
+                            # 保存到文件
+                            with open(contacts_file, 'w', encoding='utf-8') as f:
+                                json.dump(contacts_info, f, ensure_ascii=False, indent=2)
+
+                            # 更新内存缓存
+                            if not hasattr(self, "contact_name_cache"):
+                                self.contact_name_cache = {}
+                            self.contact_name_cache[cache_key] = contact_name
+
+                            logger.debug(f"[WX849] 已更新联系人 {contact_id} 昵称: {contact_name}")
+                            return contact_name
+                except Exception as e:
+                    logger.error(f"[WX849] 处理联系人信息失败: {e}")
+
+                # 如果API获取失败，返回联系人ID
+                logger.debug(f"[WX849] 未找到联系人 {contact_id} 的昵称信息")
+                return contact_id
+            except Exception as e:
+                logger.error(f"[WX849] 获取联系人昵称失败: {e}")
+                logger.error(f"[WX849] 详细错误: {traceback.format_exc()}")
+                return contact_id
+        except Exception as e:
+            logger.error(f"[WX849] 获取联系人昵称过程中出错: {e}")
+            logger.error(f"[WX849] 详细错误: {traceback.format_exc()}")
+            return contact_id
+
     async def _check_original_framework_status(self) -> bool:
         """检查原始框架状态
 
@@ -3262,6 +3507,113 @@ class WX849Channel(ChatChannel):
             logger.error(f"[WX849] 详细错误: {traceback.format_exc()}")
             return None
 
+    async def _get_group_details_by_contract_detail(self, group_id):
+        """使用GetContractDetail API获取群组详细信息"""
+        if not group_id or not group_id.endswith("@chatroom"):
+            return None
+
+        try:
+            # 获取API配置
+            api_host = conf().get("wx849_api_host", "127.0.0.1")
+            api_port = conf().get("wx849_api_port", 9000)
+            protocol_version = conf().get("wx849_protocol_version", "849")
+
+            # 确定API路径前缀
+            if protocol_version == "855" or protocol_version == "ipad":
+                api_path_prefix = "/api"
+            else:
+                api_path_prefix = "/VXAPI"
+
+            # 构建API请求参数
+            params = {
+                "Wxid": self.wxid,
+                "Towxids": group_id,
+                "ChatRoom": ""
+            }
+
+            # 构建完整的API URL用于日志
+            api_url = f"http://{api_host}:{api_port}{api_path_prefix}/Friend/GetContractDetail"
+            logger.debug(f"[WX849] 正在请求群组详情API: {api_url}")
+            logger.debug(f"[WX849] 请求参数: {json.dumps(params, ensure_ascii=False)}")
+
+            # 调用API获取群组详情
+            response = await self._call_api("/Friend/GetContractDetail", params)
+
+            if not response or not isinstance(response, dict):
+                logger.error(f"[WX849] 获取群组详情失败: 无效响应")
+                return None
+
+            # 检查响应是否成功
+            if not response.get("Success", False):
+                logger.error(f"[WX849] 获取群组详情失败: {response.get('Message', '未知错误')}")
+                return None
+
+            # 提取群组详情
+            data = response.get("Data", {})
+            if not data:
+                logger.error(f"[WX849] 获取群组详情失败: 响应中无Data")
+                return None
+
+            # 提取群组信息
+            group_details = {}
+
+            # 递归函数用于查找特定key的值
+            def find_value(obj, key):
+                # 如果是字典
+                if isinstance(obj, dict):
+                    # 直接检查当前字典
+                    if key in obj:
+                        return obj[key]
+                    # 检查带有"string"嵌套的字典
+                    if key in obj and isinstance(obj[key], dict) and "string" in obj[key]:
+                        return obj[key]["string"]
+                    # 递归检查字典的所有值
+                    for k, v in obj.items():
+                        result = find_value(v, key)
+                        if result is not None:
+                            return result
+                # 如果是列表
+                elif isinstance(obj, list):
+                    # 递归检查列表的所有项
+                    for item in obj:
+                        result = find_value(item, key)
+                        if result is not None:
+                            return result
+                return None
+
+            # 尝试提取群名称
+            nickname = find_value(data, "NickName")
+            if nickname:
+                if isinstance(nickname, dict) and "string" in nickname:
+                    group_details["nickName"] = nickname["string"]
+                elif isinstance(nickname, str):
+                    group_details["nickName"] = nickname
+
+            # 如果没找到，尝试其他可能的字段
+            if "nickName" not in group_details:
+                for name_key in ["nickname", "name", "DisplayName", "ChatRoomName"]:
+                    name_value = find_value(data, name_key)
+                    if name_value:
+                        if isinstance(name_value, dict) and "string" in name_value:
+                            group_details["nickName"] = name_value["string"]
+                        elif isinstance(name_value, str):
+                            group_details["nickName"] = name_value
+                        if "nickName" in group_details:
+                            break
+
+            # 如果找到了群名称，返回群组详情
+            if "nickName" in group_details:
+                logger.debug(f"[WX849] 获取到群组 {group_id} 名称: {group_details['nickName']}")
+                return group_details
+
+            # 如果没有找到群名称，返回None
+            logger.debug(f"[WX849] 未找到群组 {group_id} 的名称信息")
+            return None
+        except Exception as e:
+            logger.error(f"[WX849] 获取群组详情失败: {e}")
+            logger.error(f"[WX849] 详细错误: {traceback.format_exc()}")
+            return None
+
     async def _get_group_name(self, group_id):
         """获取群名称"""
         try:
@@ -3353,6 +3705,44 @@ class WX849Channel(ChatChannel):
                     logger.error(f"[WX849] 从文件获取群名出错: {e}")
 
             logger.debug(f"[WX849] 群 {group_id} 信息不存在或已过期，需要从API获取")
+
+            # 首先尝试使用GetContractDetail API获取群组信息
+            group_details = await self._get_group_details_by_contract_detail(group_id)
+            if group_details and "nickName" in group_details:
+                group_name = group_details["nickName"]
+
+                # 保存到缓存
+                if not os.path.exists(tmp_dir):
+                    os.makedirs(tmp_dir)
+
+                chatrooms_info = {}
+                if os.path.exists(chatrooms_file):
+                    try:
+                        with open(chatrooms_file, 'r', encoding='utf-8') as f:
+                            chatrooms_info = json.load(f)
+                    except Exception as e:
+                        logger.error(f"[WX849] 加载现有群聊信息失败: {str(e)}")
+
+                if group_id not in chatrooms_info:
+                    chatrooms_info[group_id] = {}
+
+                chatrooms_info[group_id]["nickName"] = group_name
+                chatrooms_info[group_id]["last_update"] = int(time.time())
+
+                with open(chatrooms_file, 'w', encoding='utf-8') as f:
+                    json.dump(chatrooms_info, f, ensure_ascii=False, indent=2)
+
+                # 缓存群名
+                if not hasattr(self, "group_name_cache"):
+                    self.group_name_cache = {}
+                self.group_name_cache[cache_key] = group_name
+
+                logger.debug(f"[WX849] 已更新群组 {group_id} 名称: {group_name}")
+
+                # 异步获取群成员详情
+                threading.Thread(target=lambda: asyncio.run(self._get_group_member_details(group_id))).start()
+
+                return group_name
 
             # 调用API获取群信息 - 使用群聊API
             params = {
@@ -3545,7 +3935,7 @@ class WX849Channel(ChatChannel):
             return group_id
 
     def _compose_context(self, ctype: ContextType, content, **kwargs):
-        """重写父类方法，构建消息上下文"""
+        """重写父类方法，构建消息上下文，与gewechat保持一致"""
         try:
             # 直接创建Context对象，确保结构正确
             context = Context()
@@ -3583,30 +3973,31 @@ class WX849Channel(ChatChannel):
                 context["from_user_id"] = sender_id
                 context["to_user_id"] = getattr(msg, 'to_user_id', self.wxid)
                 context["other_user_id"] = msg.from_user_id  # 群ID
-                context["group_name"] = msg.from_user_id  # 临时使用群ID作为群名
+
+                # 使用other_user_nickname作为群名称，与gewechat保持一致
+                if hasattr(msg, 'other_user_nickname') and msg.other_user_nickname:
+                    context["group_name"] = msg.other_user_nickname
+                else:
+                    context["group_name"] = msg.from_user_id  # 临时使用群ID作为群名
+
                 context["group_id"] = msg.from_user_id  # 群ID
                 context["msg"] = msg  # 消息对象
+
+                # 设置is_at标志，与gewechat保持一致
+                if hasattr(msg, 'is_at'):
+                    context["is_at"] = msg.is_at
+                else:
+                    context["is_at"] = False
 
                 # 设置session_id为群ID
                 context["session_id"] = msg.from_user_id
 
                 # 启动异步任务获取群名称并更新
-                loop = asyncio.get_event_loop()
                 try:
-                    # 尝试创建异步任务获取群名
-                    async def update_group_name():
-                        try:
-                            group_name = await self._get_group_name(msg.from_user_id)
-                            if group_name:
-                                context['group_name'] = group_name
-                                logger.debug(f"[WX849] 更新群名称: {group_name}")
-                        except Exception as e:
-                            logger.error(f"[WX849] 更新群名称失败: {e}")
-
                     # 使用已有事件循环运行更新任务
                     def run_async_task():
                         try:
-                            asyncio.run(update_group_name())
+                            asyncio.run(self._update_group_nickname_async(msg))
                         except Exception as e:
                             logger.error(f"[WX849] 异步获取群名称任务失败: {e}")
 
@@ -3626,11 +4017,37 @@ class WX849Channel(ChatChannel):
 
                 context["from_user_id"] = msg.sender_wxid if msg and hasattr(msg, 'sender_wxid') else ""
                 context["to_user_id"] = msg.to_user_id if msg and hasattr(msg, 'to_user_id') else ""
-                context["other_user_id"] = None
+
+                # 使用other_user_id和other_user_nickname，与gewechat保持一致
+                if hasattr(msg, 'other_user_id') and msg.other_user_id:
+                    context["other_user_id"] = msg.other_user_id
+                else:
+                    context["other_user_id"] = msg.from_user_id
+
+                # 使用other_user_nickname作为联系人昵称，与gewechat保持一致
+                if hasattr(msg, 'other_user_nickname') and msg.other_user_nickname:
+                    context["other_user_nickname"] = msg.other_user_nickname
+                else:
+                    context["other_user_nickname"] = context["from_user_nickname"]
+
                 context["msg"] = msg
 
                 # 设置session_id为发送者ID
                 context["session_id"] = msg.sender_wxid if msg and hasattr(msg, 'sender_wxid') else ""
+
+                # 启动异步任务获取联系人昵称并更新
+                try:
+                    # 使用已有事件循环运行更新任务
+                    def run_async_task():
+                        try:
+                            asyncio.run(self._update_contact_nickname_async(msg))
+                        except Exception as e:
+                            logger.error(f"[WX849] 异步获取联系人昵称任务失败: {e}")
+
+                    # 启动线程执行异步任务
+                    threading.Thread(target=run_async_task).start()
+                except Exception as e:
+                    logger.error(f"[WX849] 创建获取联系人昵称任务失败: {e}")
 
             # 添加接收者信息
             context["receiver"] = msg.from_user_id if isgroup else msg.sender_wxid
@@ -3641,7 +4058,9 @@ class WX849Channel(ChatChannel):
             # 添加调试日志
             logger.debug(f"[WX849] 生成Context对象: type={context.type}, content={context.content}, isgroup={context['isgroup']}, session_id={context.get('session_id', 'None')}")
             if isgroup:
-                logger.debug(f"[WX849] 群聊消息详情: group_id={context.get('group_id')}, from_user_id={context.get('from_user_id')}")
+                logger.debug(f"[WX849] 群聊消息详情: group_id={context.get('group_id')}, group_name={context.get('group_name')}, from_user_id={context.get('from_user_id')}")
+            else:
+                logger.debug(f"[WX849] 私聊消息详情: other_user_id={context.get('other_user_id')}, other_user_nickname={context.get('other_user_nickname')}")
 
             return context
         except Exception as e:
@@ -3685,3 +4104,226 @@ class WX849Channel(ChatChannel):
             logger.error(f"[WX849] 获取群成员昵称失败: {e}")
             logger.error(f"[WX849] 详细错误: {traceback.format_exc()}")
             return member_wxid
+
+    async def _update_chatrooms_info(self):
+        """更新群聊信息缓存"""
+        try:
+            logger.debug(f"[WX849] 开始更新群聊信息缓存")
+
+            # 获取API配置
+            api_host = conf().get("wx849_api_host", "127.0.0.1")
+            api_port = conf().get("wx849_api_port", 9000)
+            protocol_version = conf().get("wx849_protocol_version", "849")
+
+            # 确定API路径前缀
+            if protocol_version == "855" or protocol_version == "ipad":
+                api_path_prefix = "/api"
+            else:
+                api_path_prefix = "/VXAPI"
+
+            # 首先获取联系人列表，找出所有群聊
+            # 构建完整的API URL用于日志
+            api_url = f"http://{api_host}:{api_port}{api_path_prefix}/Friend/GetContractList"
+            logger.debug(f"[WX849] 正在请求联系人列表API: {api_url}")
+
+            # 准备请求参数
+            params = {
+                "Wxid": self.wxid,
+                "CurrentWxcontactSeq": 0,
+                "CurrentChatRoomContactSeq": 0
+            }
+
+            # 调用API获取联系人列表
+            response = await self._call_api("/Friend/GetContractList", params)
+
+            if not response or not isinstance(response, dict):
+                logger.error(f"[WX849] 获取联系人列表失败: 无效响应")
+                return
+
+            # 检查响应是否成功
+            if not response.get("Success", False):
+                logger.error(f"[WX849] 获取联系人列表失败: {response.get('Message', '未知错误')}")
+                return
+
+            # 提取联系人列表
+            data = response.get("Data", {})
+            contact_list = data.get("ContactList", [])
+
+            if not contact_list or not isinstance(contact_list, list):
+                logger.error(f"[WX849] 获取联系人列表失败: 响应中无ContactList或格式不正确")
+                return
+
+            # 创建临时目录
+            tmp_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "tmp")
+            if not os.path.exists(tmp_dir):
+                os.makedirs(tmp_dir)
+
+            # 定义群聊信息文件路径
+            chatrooms_file = os.path.join(tmp_dir, 'wx849_rooms.json')
+
+            # 读取现有的群聊信息（如果存在）
+            chatrooms_info = {}
+            if os.path.exists(chatrooms_file):
+                try:
+                    with open(chatrooms_file, 'r', encoding='utf-8') as f:
+                        chatrooms_info = json.load(f)
+                    logger.debug(f"[WX849] 已加载 {len(chatrooms_info)} 个现有群聊信息")
+                except Exception as e:
+                    logger.error(f"[WX849] 加载现有群聊信息失败: {str(e)}")
+
+            # 更新群聊信息
+            updated_count = 0
+            for contact in contact_list:
+                if not isinstance(contact, dict):
+                    continue
+
+                # 检查是否是群聊
+                user_name = contact.get("UserName", "")
+                if not user_name or not user_name.endswith("@chatroom"):
+                    continue
+
+                # 提取群聊信息
+                nick_name = contact.get("NickName", "")
+
+                # 更新群聊信息
+                if user_name not in chatrooms_info:
+                    chatrooms_info[user_name] = {
+                        "chatroomId": user_name,
+                        "nickName": nick_name or user_name,
+                        "chatRoomOwner": "",
+                        "members": [],
+                        "last_update": int(time.time())
+                    }
+                else:
+                    # 只更新昵称和时间戳
+                    if nick_name:
+                        chatrooms_info[user_name]["nickName"] = nick_name
+                    chatrooms_info[user_name]["last_update"] = int(time.time())
+
+                updated_count += 1
+
+            # 保存到文件
+            with open(chatrooms_file, 'w', encoding='utf-8') as f:
+                json.dump(chatrooms_info, f, ensure_ascii=False, indent=2)
+
+            logger.info(f"[WX849] 已更新 {updated_count} 个群聊基础信息")
+
+            # 更新群成员信息
+            for group_id in list(chatrooms_info.keys())[:10]:  # 限制一次最多更新10个群
+                try:
+                    await self._get_group_member_details(group_id)
+                except Exception as e:
+                    logger.error(f"[WX849] 更新群 {group_id} 成员信息失败: {e}")
+
+        except Exception as e:
+            logger.error(f"[WX849] 更新群聊信息缓存失败: {e}")
+            logger.error(f"[WX849] 详细错误: {traceback.format_exc()}")
+
+    async def _update_contacts_info(self):
+        """更新联系人信息缓存"""
+        try:
+            logger.debug(f"[WX849] 开始更新联系人信息缓存")
+
+            # 获取API配置
+            api_host = conf().get("wx849_api_host", "127.0.0.1")
+            api_port = conf().get("wx849_api_port", 9000)
+            protocol_version = conf().get("wx849_protocol_version", "849")
+
+            # 确定API路径前缀
+            if protocol_version == "855" or protocol_version == "ipad":
+                api_path_prefix = "/api"
+            else:
+                api_path_prefix = "/VXAPI"
+
+            # 首先获取联系人列表
+            # 构建完整的API URL用于日志
+            api_url = f"http://{api_host}:{api_port}{api_path_prefix}/Friend/GetContractList"
+            logger.debug(f"[WX849] 正在请求联系人列表API: {api_url}")
+
+            # 准备请求参数
+            params = {
+                "Wxid": self.wxid,
+                "CurrentWxcontactSeq": 0,
+                "CurrentChatRoomContactSeq": 0
+            }
+
+            # 调用API获取联系人列表
+            response = await self._call_api("/Friend/GetContractList", params)
+
+            if not response or not isinstance(response, dict):
+                logger.error(f"[WX849] 获取联系人列表失败: 无效响应")
+                return
+
+            # 检查响应是否成功
+            if not response.get("Success", False):
+                logger.error(f"[WX849] 获取联系人列表失败: {response.get('Message', '未知错误')}")
+                return
+
+            # 提取联系人列表
+            data = response.get("Data", {})
+            contact_list = data.get("ContactList", [])
+
+            if not contact_list or not isinstance(contact_list, list):
+                logger.error(f"[WX849] 获取联系人列表失败: 响应中无ContactList或格式不正确")
+                return
+
+            # 创建临时目录
+            tmp_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "tmp")
+            if not os.path.exists(tmp_dir):
+                os.makedirs(tmp_dir)
+
+            # 定义联系人信息文件路径
+            contacts_file = os.path.join(tmp_dir, 'wx849_contacts.json')
+
+            # 读取现有的联系人信息（如果存在）
+            contacts_info = {}
+            if os.path.exists(contacts_file):
+                try:
+                    with open(contacts_file, 'r', encoding='utf-8') as f:
+                        contacts_info = json.load(f)
+                    logger.debug(f"[WX849] 已加载 {len(contacts_info)} 个现有联系人信息")
+                except Exception as e:
+                    logger.error(f"[WX849] 加载现有联系人信息失败: {str(e)}")
+
+            # 更新联系人信息
+            updated_count = 0
+            for contact in contact_list:
+                if not isinstance(contact, dict):
+                    continue
+
+                # 检查是否是联系人（非群聊）
+                user_name = contact.get("UserName", "")
+                if not user_name or user_name.endswith("@chatroom"):
+                    continue
+
+                # 提取联系人信息
+                nick_name = contact.get("NickName", "")
+                remark_name = contact.get("RemarkName", "")
+
+                # 更新联系人信息
+                if user_name not in contacts_info:
+                    contacts_info[user_name] = {
+                        "UserName": user_name,
+                        "NickName": nick_name or user_name,
+                        "RemarkName": remark_name or "",
+                        "last_update": int(time.time())
+                    }
+                else:
+                    # 更新昵称、备注和时间戳
+                    if nick_name:
+                        contacts_info[user_name]["NickName"] = nick_name
+                    if remark_name:
+                        contacts_info[user_name]["RemarkName"] = remark_name
+                    contacts_info[user_name]["last_update"] = int(time.time())
+
+                updated_count += 1
+
+            # 保存到文件
+            with open(contacts_file, 'w', encoding='utf-8') as f:
+                json.dump(contacts_info, f, ensure_ascii=False, indent=2)
+
+            logger.info(f"[WX849] 已更新 {updated_count} 个联系人信息")
+
+        except Exception as e:
+            logger.error(f"[WX849] 更新联系人信息缓存失败: {e}")
+            logger.error(f"[WX849] 详细错误: {traceback.format_exc()}")
