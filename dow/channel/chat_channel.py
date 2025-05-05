@@ -170,20 +170,51 @@ class ChatChannel(Channel):
     def _handle(self, context: Context):
         if context is None or not context.content:
             return
-        logger.debug("[chat_channel] ready to handle context: {}".format(context))
+
+        # 创建上下文的深拷贝，确保完全独立
+        # 由于Context对象没有copy方法，我们需要手动创建一个新的Context对象
+        independent_context = Context(
+            type=context.type,
+            content=context.content,
+            kwargs={}  # 创建空字典，然后手动复制
+        )
+
+        # 手动复制 kwargs 字典中的内容
+        for key in context.kwargs:
+            # 对于复杂对象，创建深拷贝
+            if isinstance(context.kwargs[key], dict):
+                independent_context.kwargs[key] = context.kwargs[key].copy()
+            elif isinstance(context.kwargs[key], list):
+                independent_context.kwargs[key] = context.kwargs[key].copy()
+            else:
+                independent_context.kwargs[key] = context.kwargs[key]
+
+        # 记录上下文信息，确保使用的是正确的上下文对象
+        logger.debug("[chat_channel] ready to handle context: {}".format(independent_context))
+
+        # 记录关键信息，用于调试
+        session_id = independent_context.get("session_id", "unknown")
+        receiver = independent_context.get("receiver", "unknown")
+        is_group = independent_context.get("isgroup", False)
+        logger.debug(f"[chat_channel] Processing message - session_id: {session_id}, receiver: {receiver}, isgroup: {is_group}")
+
         # reply的构建步骤
-        reply = self._generate_reply(context)
+        reply = self._generate_reply(independent_context)
 
         logger.debug("[chat_channel] ready to decorate reply: {}".format(reply))
 
         # reply的包装步骤
         if reply and reply.content:
-            reply = self._decorate_reply(context, reply)
+            reply = self._decorate_reply(independent_context, reply)
 
             # reply的发送步骤
-            self._send_reply(context, reply)
+            self._send_reply(independent_context, reply)
 
     def _generate_reply(self, context: Context, reply: Reply = Reply()) -> Reply:
+        # 确保上下文中包含 isgroup 键
+        if "isgroup" not in context:
+            context["isgroup"] = False
+
         e_context = PluginManager().emit_event(
             EventContext(
                 Event.ON_HANDLE_CONTEXT,

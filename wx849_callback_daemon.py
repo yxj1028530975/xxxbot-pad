@@ -56,6 +56,9 @@ message_queue_lock = threading.Lock()
 # 用户昵称缓存字典
 user_nickname_cache = {}
 
+# 已处理的图片消息ID缓存
+processed_image_msgs = set()
+
 class MessageMonitor:
     def __init__(self):
         self.is_running = True
@@ -158,10 +161,14 @@ class MessageMonitor:
                 # 匹配更多可能的消息模式，特别是原始框架特定的格式
                 if ("收到文本消息" in line or
                     "收到消息" in line or
-                    "收到图片消息" in line or
+                    "收到图片消息" in line or  # 特别关注图片消息
                     "收到语音消息" in line or
                     "收到被@消息" in line or  # 添加被@消息类型
                     "MsgId" in line):
+
+                    # 特别处理图片消息，确保它们被正确识别
+                    if "收到图片消息" in line:
+                        logger.info(f"发现图片消息行: {line[:100]}...")
 
                     logger.info(f"发现可能的消息行: {line[:100]}...")
 
@@ -217,6 +224,52 @@ class MessageMonitor:
                     logger.error(f"JSON解析失败: {e}, 内容: {json_str[:100]}")
 
             # 如果不是JSON格式，尝试从格式化的日志中提取信息
+            # 特殊处理图片消息
+            if "收到图片消息" in line:
+                logger.info(f"检测到图片消息: {line}")
+                # 尝试匹配图片消息格式: 消息ID:1687893408 来自:wxid_lnbsshdobq7y22 发送人:wxid_lnbsshdobq7y22 XML:<?xml...
+                img_pattern = re.compile(r'消息ID:(\d+).*?来自:(.*?)[\s\:].*?发送人:(.*?)[\s\:].*?XML:(.*?)(?=$|\n)')
+                img_match = img_pattern.search(line)
+
+                if img_match:
+                    msg_id, from_user, sender, xml_content = img_match.groups()
+                    logger.info(f"成功解析图片消息: ID={msg_id}, 发送者={sender}, XML长度={len(xml_content)}")
+
+                    # 检查是否已经处理过这条图片消息
+                    global processed_image_msgs
+                    if msg_id in processed_image_msgs:
+                        logger.info(f"图片消息 {msg_id} 已经处理过，跳过重复处理")
+                        return None
+
+                    # 标记为已处理
+                    processed_image_msgs.add(msg_id)
+
+                    # 如果缓存太大，清理一下
+                    if len(processed_image_msgs) > 1000:
+                        # 只保留最近的500条
+                        processed_image_msgs = set(list(processed_image_msgs)[-500:])
+
+                    # 创建图片消息数据
+                    msg_data = {
+                        "MsgId": int(msg_id),
+                        "FromUserName": {"string": from_user},
+                        "MsgType": 3,  # 图片消息类型
+                        "Content": xml_content,
+                        "FromWxid": from_user,
+                        "SenderWxid": sender,
+                        "RawLogLine": line,  # 保存原始行
+                    }
+
+                    # 尝试从缓存添加发送者昵称
+                    if sender in user_nickname_cache:
+                        msg_data["SenderNickName"] = user_nickname_cache[sender]
+                        logger.info(f"为图片消息添加发送者昵称: {sender} -> {user_nickname_cache[sender]}")
+
+                    logger.info(f"成功从日志提取图片消息数据: ID={msg_id}, 发送者={sender}, 类型=3(图片)")
+                    return msg_data
+                else:
+                    logger.warning(f"无法解析图片消息格式: {line[:100]}...")
+
             # 特殊处理被@消息
             if "收到被@消息" in line:
                 logger.info(f"检测到被@消息: {line}")

@@ -1733,6 +1733,7 @@ def setup_routes():
                     "version.json",
                     "bot_core.py",
                     "main_config.toml.example",
+                    "wx849_callback_daemon.py",
                     "main.py"
                 ]
 
