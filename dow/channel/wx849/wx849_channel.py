@@ -8,6 +8,7 @@ import sys
 import traceback  # 添加traceback模块导入
 import xml.etree.ElementTree as ET  # 在顶部添加ET导入
 import aiohttp  # 添加aiohttp模块导入
+import re  # 添加re模块导入
 from typing import Dict, Any, Optional, List, Tuple
 import urllib.parse  # 添加urllib.parse模块导入
 import requests
@@ -234,6 +235,10 @@ class WX849Channel(ChatChannel):
             logger.info(f"[WX849] 消息回调API密钥: {self.api_key}")
         else:
             logger.info("[WX849] 未设置API密钥，将不进行授权验证")
+        # 新增属性，用于记录正在等待图片的会话
+        self.waiting_for_image = ExpiredDict(300)  # 设置5分钟过期，固定值
+        # 新增属性，用于记录会话最近图片消息
+        self.recent_image_msgs = ExpiredDict(600)  # 设置10分钟过期，固定值
 
     async def _initialize_bot(self):
         """初始化 bot"""
@@ -554,7 +559,139 @@ class WX849Channel(ChatChannel):
             if not messages:
                 messages = [data]  # 如果没有messages字段，则把整个data当作单个消息处理
 
-            # 处理每条消息
+            # 记录最近收到的媒体消息，用于识图等功能的关联
+            for msg in messages:
+                try:
+                    # 检查是否是多媒体消息
+                    msg_type = msg.get('MsgType', 0)
+
+                    # 检查是否是图片消息的回调日志
+                    raw_log_line = msg.get("RawLogLine", "")
+                    if raw_log_line and "收到图片消息" in raw_log_line:
+                        logger.info(f"[WX849] 检测到图片消息回调: {raw_log_line}")
+
+                        # 尝试解析图片消息
+                        try:
+                            # 提取消息ID
+                            msg_id_match = re.search(r'消息ID:(\d+)', raw_log_line)
+                            if msg_id_match:
+                                msg_id = msg_id_match.group(1)
+
+                                # 提取发送者ID
+                                from_user_match = re.search(r'来自:([^\s]+)', raw_log_line)
+                                from_user_id = from_user_match.group(1) if from_user_match else ""
+
+                                # 提取发送人ID
+                                sender_match = re.search(r'发送人:([^\s]+)', raw_log_line)
+                                sender_wxid = sender_match.group(1) if sender_match else ""
+
+                                # 提取XML内容 - 使用更宽松的正则表达式
+                                xml_match = re.search(r'XML:(.*)', raw_log_line, re.DOTALL)
+                                if xml_match:
+                                    xml_content = xml_match.group(1).strip()
+                                    logger.info(f"[WX849] 提取到XML内容: {xml_content[:100]}...")
+                                else:
+                                    xml_content = ""
+                                    logger.error(f"[WX849] 无法提取XML内容")
+
+                                if msg_id and from_user_id and xml_content:
+                                    # 创建一个新的消息对象
+                                    is_group = from_user_id.endswith("@chatroom")
+
+                                    # 构建消息对象
+                                    image_msg = {
+                                        "MsgId": msg_id,
+                                        "FromUserName": from_user_id,
+                                        "ToUserName": self.wxid,
+                                        "MsgType": 3,  # 图片类型
+                                        "Content": xml_content,
+                                        "SenderWxid": sender_wxid
+                                    }
+
+                                    # 创建消息对象
+                                    cmsg = WX849Message(image_msg, is_group)
+
+                                    # 设置发送者信息
+                                    cmsg.sender_wxid = sender_wxid
+
+                                    # 设置消息类型为IMAGE
+                                    cmsg.ctype = ContextType.IMAGE
+
+                                    # 生成会话ID
+                                    session_id = from_user_id if is_group else sender_wxid
+
+                                    # 记录接收到媒体消息的时间和信息
+                                    logger.info(f"[WX849] 成功解析图片消息，关联到会话: {session_id}")
+
+                                    # 将图片消息保存到recent_image_msgs中
+                                    self.recent_image_msgs[session_id] = cmsg
+
+                                    # 处理图片消息 - 这里只进行初步处理
+                                    self._process_image_message(cmsg)
+
+                                    # 直接生成上下文并发送到DOW框架
+                                    context = self._compose_context(cmsg.ctype, cmsg.content, isgroup=is_group, msg=cmsg)
+                                    if context:
+                                        logger.info(f"[WX849] 图片消息解析完成，生成上下文并发送到DOW框架: {session_id}")
+                                        self.produce(context)
+                                    else:
+                                        logger.error(f"[WX849] 图片消息解析完成，但生成上下文失败")
+
+                                    # 启动异步任务下载图片
+                                    threading.Thread(target=lambda: asyncio.run(self._download_image(cmsg))).start()
+                        except Exception as e:
+                            logger.error(f"[WX849] 解析图片消息回调失败: {e}")
+                            logger.error(traceback.format_exc())
+
+                    # 处理常规多媒体消息
+                    elif msg_type in [3, 43, 47, 49]:  # 图片(3)、视频(43)、表情(47)、文件(49)
+                        # 获取消息的目标接收者和发送者
+                        from_user_id = msg.get("fromUserName", msg.get("FromUserName", ""))
+                        to_user_id = msg.get("toUserName", msg.get("ToUserName", ""))
+                        sender_wxid = msg.get("SenderWxid", "")
+
+                        if isinstance(from_user_id, dict) and "string" in from_user_id:
+                            from_user_id = from_user_id["string"]
+                        if isinstance(to_user_id, dict) and "string" in to_user_id:
+                            to_user_id = to_user_id["string"]
+
+                        # 确定是群消息还是私聊消息
+                        is_group = False
+                        if from_user_id and from_user_id.endswith("@chatroom"):
+                            is_group = True
+                        elif to_user_id and to_user_id.endswith("@chatroom"):
+                            is_group = True
+                            # 交换发送者和接收者，确保from_user_id是群ID
+                            from_user_id, to_user_id = to_user_id, from_user_id
+
+                        # 生成会话ID，用于关联消息
+                        session_id = from_user_id if is_group else (sender_wxid or from_user_id)
+
+                        # 记录接收到媒体消息的时间和信息
+                        logger.info(f"[WX849] 收到媒体消息(类型:{msg_type})，立即处理并关联到会话: {session_id}")
+
+                        # 保存最近的图片消息，供后续命令使用
+                        if msg_type == 3:  # 图片类型
+                            logger.info(f"[WX849] 保存图片消息到会话 {session_id} 的最近消息列表")
+                            # 创建消息对象
+                            cmsg = WX849Message(msg, is_group)
+                            # 将图片消息保存到recent_image_msgs中
+                            self.recent_image_msgs[session_id] = cmsg
+
+                        # 立即将媒体消息发送到处理队列，确保能与之前的命令关联
+                        # 创建消息对象
+                        cmsg = WX849Message(msg, is_group)
+
+                        # 立即处理这条消息，不等待下一次回调
+                        if is_group:
+                            self.handle_group(cmsg)
+                        else:
+                            self.handle_single(cmsg)
+                except Exception as e:
+                    logger.error(f"[WX849] 处理媒体消息失败: {e}")
+                    logger.error(traceback.format_exc())
+
+            # 处理所有消息
             for msg in messages:
                 try:
                     # 确保消息类型正确设置
@@ -956,12 +1093,15 @@ class WX849Channel(ChatChannel):
 
                 # 记录是否需要处理
                 if not trigger_proceed:
-                    logger.debug(f"[WX849] 群聊消息未匹配触发条件，跳过处理: {cmsg.content}")
-                    return
+                    logger.debug(f"[WX849] 群聊消息未匹配触发条件，但仍会转发给插件: {cmsg.content}")
+                    # 不再直接返回，而是继续处理，但标记为不触发AI
+                    # return
 
             # 生成上下文
             context = self._compose_context(cmsg.ctype, cmsg.content, isgroup=True, msg=cmsg)
             if context:
+                # 添加前缀匹配标志到上下文，用于决定是否触发AI对话
+                context["trigger_prefix"] = trigger_proceed
                 self.produce(context)
             else:
                 logger.debug(f"[WX849] 生成群聊上下文失败，跳过处理")
@@ -1396,6 +1536,12 @@ class WX849Channel(ChatChannel):
     def _process_image_message(self, cmsg):
         """处理图片消息"""
         import xml.etree.ElementTree as ET
+        import os
+        import base64
+        import asyncio
+        import aiohttp
+        import time
+        import threading
 
         cmsg.ctype = ContextType.IMAGE
 
@@ -1430,22 +1576,137 @@ class WX849Channel(ChatChannel):
 
         # 解析图片信息
         try:
-            root = ET.fromstring(cmsg.content)
-            img_element = root.find('img')
-            if img_element is not None:
-                cmsg.image_info = {
-                    'aeskey': img_element.get('aeskey'),
-                    'cdnmidimgurl': img_element.get('cdnmidimgurl'),
-                    'length': img_element.get('length'),
-                    'md5': img_element.get('md5')
-                }
-                logger.debug(f"解析图片XML成功: aeskey={cmsg.image_info['aeskey']}, length={cmsg.image_info['length']}, md5={cmsg.image_info['md5']}")
+            # 检查内容是否是XML
+            if cmsg.content and (cmsg.content.startswith('<?xml') or cmsg.content.startswith('<msg>')):
+                root = ET.fromstring(cmsg.content)
+                img_element = root.find('img')
+                if img_element is not None:
+                    cmsg.image_info = {
+                        'aeskey': img_element.get('aeskey'),
+                        'cdnmidimgurl': img_element.get('cdnmidimgurl'),
+                        'length': img_element.get('length'),
+                        'md5': img_element.get('md5')
+                    }
+                    logger.debug(f"解析图片XML成功: aeskey={cmsg.image_info['aeskey']}, length={cmsg.image_info['length']}, md5={cmsg.image_info['md5']}")
+
+                    # 下载图片
+                    threading.Thread(target=lambda: asyncio.run(self._download_image(cmsg))).start()
+            else:
+                # 如果内容不是XML，可能是已经下载好的图片路径
+                if os.path.exists(cmsg.content):
+                    cmsg.image_path = cmsg.content
+                    logger.info(f"[WX849] 图片已存在，路径: {cmsg.image_path}")
+                else:
+                    logger.warning(f"[WX849] 图片内容既不是XML也不是有效路径: {cmsg.content[:100]}")
         except Exception as e:
             logger.debug(f"解析图片消息失败: {e}, 内容: {cmsg.content[:100]}")
+            logger.debug(f"详细错误: {traceback.format_exc()}")
             cmsg.image_info = {}
 
         # 输出日志 - 修改为显示完整XML内容
-        logger.info(f"收到图片消息: ID:{cmsg.msg_id} 来自:{cmsg.from_user_id} 发送人:{cmsg.sender_wxid}\nXML内容: {cmsg.content}")
+        logger.info(f"收到图片消息: ID:{cmsg.msg_id} 来自:{cmsg.from_user_id} 发送人:{cmsg.sender_wxid}")
+
+        # 记录最近收到的图片消息，用于识图等功能的关联
+        session_id = cmsg.from_user_id if cmsg.is_group else cmsg.sender_wxid
+        self.recent_image_msgs[session_id] = cmsg
+        logger.info(f"[WX849] 已记录会话 {session_id} 的图片消息，可用于识图关联")
+
+        # 如果已经有图片路径，直接生成上下文并发送到DOW框架
+        if hasattr(cmsg, 'image_path') and cmsg.image_path and os.path.exists(cmsg.image_path):
+            # 更新消息内容为图片路径
+            cmsg.content = cmsg.image_path
+
+            # 确保消息类型为IMAGE
+            cmsg.ctype = ContextType.IMAGE
+
+            # 生成上下文并发送到DOW框架
+            context = self._compose_context(cmsg.ctype, cmsg.content, isgroup=cmsg.is_group, msg=cmsg)
+            if context:
+                logger.info(f"[WX849] 图片消息处理完成，生成上下文并发送到DOW框架: {session_id}")
+                self.produce(context)
+            else:
+                logger.error(f"[WX849] 图片消息处理完成，但生成上下文失败")
+
+    async def _download_image(self, cmsg):
+        """下载图片并设置本地路径"""
+        try:
+            # 创建临时目录
+            tmp_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "tmp", "images")
+            os.makedirs(tmp_dir, exist_ok=True)
+
+            # 生成图片文件名
+            image_filename = f"img_{cmsg.msg_id}_{int(time.time())}.jpg"
+            image_path = os.path.join(tmp_dir, image_filename)
+
+            # 获取API配置
+            api_host = conf().get("wx849_api_host", "127.0.0.1")
+            api_port = conf().get("wx849_api_port", 9011)
+            protocol_version = conf().get("wx849_protocol_version", "849")
+
+            # 确定API路径前缀
+            if protocol_version == "855" or protocol_version == "ipad":
+                api_path_prefix = "/api"
+            else:
+                api_path_prefix = "/VXAPI"
+
+            # 构建API请求参数
+            params = {
+                "MsgId": cmsg.msg_id,
+                "ToWxid": cmsg.from_user_id,
+                "Wxid": self.wxid
+            }
+
+            # 构建完整的API URL
+            api_url = f"http://{api_host}:{api_port}{api_path_prefix}/Msg/GetMsgImage"
+            logger.debug(f"[WX849] 尝试使用get_msg_image下载图片: MsgId={cmsg.msg_id}, length={cmsg.image_info.get('length', 'unknown')}")
+
+            # 调用API获取图片
+            async with aiohttp.ClientSession() as session:
+                async with session.post(api_url, json=params) as response:
+                    if response.status != 200:
+                        logger.error(f"[WX849] 下载图片失败, 状态码: {response.status}")
+                        return
+
+                    # 获取响应内容
+                    result = await response.json()
+
+                    # 检查响应是否成功
+                    if not result.get("Success", False):
+                        logger.error(f"[WX849] 下载图片失败: {result.get('Message', '未知错误')}")
+                        return
+
+                    # 提取图片数据
+                    data = result.get("Data", {})
+                    image_base64 = data.get("Image", "")
+
+                    if not image_base64:
+                        logger.error(f"[WX849] 下载图片失败: 响应中无图片数据")
+                        return
+
+                    # 解码Base64数据并保存图片
+                    image_data = base64.b64decode(image_base64)
+                    with open(image_path, "wb") as f:
+                        f.write(image_data)
+
+                    logger.info(f"[WX849] 图片下载成功，保存到: {image_path}")
+
+                    # 设置图片本地路径
+                    cmsg.image_path = image_path
+
+                    # 更新消息内容为图片路径，以便DOW框架处理
+                    cmsg.content = image_path
+
+                    # 确保消息类型为IMAGE
+                    cmsg.ctype = ContextType.IMAGE
+
+                    # 生成会话ID
+                    session_id = cmsg.from_user_id if cmsg.is_group else cmsg.sender_wxid
+
+                    # 图片已经在回调处理时发送到DOW框架，这里只记录日志
+                    logger.info(f"[WX849] 图片下载完成，保存到: {cmsg.image_path}")
+        except Exception as e:
+            logger.error(f"[WX849] 下载图片失败: {e}")
+            logger.error(f"[WX849] 详细错误: {traceback.format_exc()}")
 
     def _process_voice_message(self, cmsg):
         """处理语音消息"""

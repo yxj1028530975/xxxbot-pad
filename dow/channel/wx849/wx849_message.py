@@ -40,6 +40,8 @@ class WX849Message(ChatMessage):
         self.at_list = []          # 被@的用户列表
         self.ctype = ContextType.UNKNOWN
         self.self_display_name = "" # 机器人在群内的昵称
+        self.image_info = {}       # 图片信息
+        self.image_path = ""       # 图片本地路径
 
         # 添加与gewechat兼容的字段
         self.actual_user_id = ""    # 实际发送者ID
