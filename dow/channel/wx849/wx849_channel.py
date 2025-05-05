@@ -923,6 +923,8 @@ class WX849Channel(ChatChannel):
             # 生成上下文
             context = self._compose_context(cmsg.ctype, cmsg.content, isgroup=False, msg=cmsg)
             if context:
+                # 添加trigger_prefix标志，确保私聊消息始终触发AI对话
+                context["trigger_prefix"] = True
                 self.produce(context)
             else:
                 logger.debug(f"[WX849] 生成上下文失败，跳过处理")
