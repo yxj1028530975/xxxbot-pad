@@ -124,3 +124,67 @@ class WX849Message(ChatMessage):
     def is_group_message(self):
         """判断是否为群消息"""
         return self.is_group
+
+    def _prepare_fn(self):
+        """准备函数，用于下载图片等资源
+        这个函数会被插件调用，用于确保资源已经准备好
+        """
+        # 对于图片消息，确保图片已下载
+        if self.ctype == ContextType.IMAGE and hasattr(self, '_channel'):
+            import asyncio
+            import threading
+
+            # 如果已经有图片路径且文件存在，直接返回
+            if self.image_path and os.path.exists(self.image_path):
+                return
+
+            # 否则尝试下载图片
+            try:
+                # 使用线程运行异步下载函数
+                if hasattr(self._channel, '_download_image'):
+                    from common.log import logger
+                    logger.info(f"[WX849Message] 开始下载图片: {self.msg_id}")
+
+                    # 创建事件循环
+                    import asyncio
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+
+                    # 直接在当前线程中运行异步函数
+                    try:
+                        success = loop.run_until_complete(self._channel._download_image(self))
+                        loop.close()
+
+                        if success:
+                            logger.info(f"[WX849Message] 图片下载成功: {self.image_path}")
+                            # 检查图片是否下载成功
+                            if self.image_path and os.path.exists(self.image_path):
+                                # 更新content为图片路径
+                                self.content = self.image_path
+                                # 设置_prepared标志
+                                self._prepared = True
+                                return
+                        else:
+                            logger.error(f"[WX849Message] 图片下载失败")
+                    except Exception as loop_err:
+                        logger.error(f"[WX849Message] 运行异步下载函数失败: {loop_err}")
+
+                    # 如果上面的方法失败，尝试使用线程方法
+                    logger.info(f"[WX849Message] 尝试使用线程方法下载图片")
+                    thread = threading.Thread(
+                        target=lambda: asyncio.run(self._channel._download_image(self))
+                    )
+                    thread.start()
+                    thread.join(timeout=15)  # 最多等待15秒
+
+                    # 检查图片是否下载成功
+                    if self.image_path and os.path.exists(self.image_path):
+                        # 更新content为图片路径
+                        self.content = self.image_path
+                        # 设置_prepared标志
+                        self._prepared = True
+            except Exception as e:
+                from common.log import logger
+                logger.error(f"[WX849Message] 准备图片失败: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
