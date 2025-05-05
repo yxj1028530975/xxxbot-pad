@@ -20,6 +20,7 @@ from common.log import logger
 from plugins import Plugin, Event, EventAction, EventContext, register
 from config import conf
 from .login import LoginHandler
+import traceback
 
 @register(
     name="Yuewen",
@@ -659,8 +660,57 @@ class YuewenPlugin(Plugin):
                     logger.error(f"[Yuewen] 读取文件失败 {file_path}: {e}")
                     return None
             
+            # 处理XML格式的图片消息
+            def parse_wx_image_xml(xml_content):
+                try:
+                    logger.debug(f"[Yuewen] 尝试解析XML图片消息: {xml_content[:100]}...")
+                    
+                    # 检查是否是XML格式
+                    if not xml_content.startswith('<?xml'):
+                        return None
+                    
+                    import xml.etree.ElementTree as ET
+                    import re
+                    
+                    # 解析XML
+                    root = ET.fromstring(xml_content)
+                    
+                    # 尝试找到图片相关信息
+                    img = root.find('img')
+                    if img is not None:
+                        # 尝试获取图片ID
+                        msg_id = None
+                        if hasattr(msg, 'msg_id'):
+                            msg_id = msg.msg_id
+                        elif hasattr(msg, 'msg') and 'MsgId' in msg.msg:
+                            msg_id = msg.msg['MsgId']
+                        
+                        if msg_id:
+                            logger.info(f"[Yuewen] 从XML消息中获取到图片ID: {msg_id}")
+                            
+                            # 尝试调用wx849的图片获取API
+                            if hasattr(msg, '_channel') and hasattr(msg._channel, '_get_image'):
+                                try:
+                                    img_data = msg._channel._get_image(msg_id)
+                                    if img_data:
+                                        logger.info(f"[Yuewen] 成功通过API获取图片数据，大小: {len(img_data)} 字节")
+                                        return img_data
+                                except Exception as e:
+                                    logger.error(f"[Yuewen] 通过API获取图片失败: {e}")
+                    
+                    return None
+                except Exception as e:
+                    logger.error(f"[Yuewen] 解析XML图片消息失败: {e}")
+                    return None
+            
             # 按优先级尝试不同的读取方式
             if isinstance(content, str):
+                # 0. 如果是XML格式的图片消息
+                if content.startswith('<?xml') and '<img' in content:
+                    xml_data = parse_wx_image_xml(content)
+                    if xml_data:
+                        return xml_data
+                
                 # 1. 如果是文件路径，直接读取
                 if os.path.isfile(content):
                     data = read_file(content)
@@ -683,8 +733,20 @@ class YuewenPlugin(Plugin):
                 if data:
                     return data
             
-            # 4. 如果文件未下载，尝试下载
-            if hasattr(msg, '_prepare_fn') and not msg._prepared:
+            # 4. 如果有channel属性，尝试获取图片
+            if hasattr(msg, '_channel') and hasattr(msg, 'msg_id'):
+                logger.debug(f"[Yuewen] 尝试使用channel获取图片，msg_id: {msg.msg_id}")
+                try:
+                    if hasattr(msg._channel, '_get_image'):
+                        img_data = msg._channel._get_image(msg.msg_id)
+                        if img_data:
+                            logger.info(f"[Yuewen] 成功通过channel获取图片数据，大小: {len(img_data)} 字节")
+                            return img_data
+                except Exception as e:
+                    logger.error(f"[Yuewen] 通过channel获取图片失败: {e}")
+            
+            # 5. 如果文件未下载，尝试下载
+            if hasattr(msg, '_prepare_fn') and not getattr(msg, '_prepared', False):
                 logger.debug("[Yuewen] 尝试下载图片...")
                 try:
                     msg._prepare_fn()
@@ -698,62 +760,106 @@ class YuewenPlugin(Plugin):
                 except Exception as e:
                     logger.error(f"[Yuewen] 下载图片失败: {e}")
             
+            # 6. 如果有raw_msg，尝试获取图片
+            if hasattr(msg, 'raw_msg') and isinstance(msg.raw_msg, dict):
+                # 尝试从raw_msg获取图片ID
+                msg_id = msg.raw_msg.get('MsgId')
+                if msg_id and hasattr(msg, '_channel') and hasattr(msg._channel, '_get_image'):
+                    try:
+                        img_data = msg._channel._get_image(msg_id)
+                        if img_data:
+                            logger.info(f"[Yuewen] 成功通过msg_id获取图片数据，大小: {len(img_data)} 字节")
+                            return img_data
+                    except Exception as e:
+                        logger.error(f"[Yuewen] 通过msg_id获取图片失败: {e}")
+            
             logger.error(f"[Yuewen] 无法获取图片数据")
             return None
             
         except Exception as e:
             logger.error(f"[Yuewen] 获取图片数据失败: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return None
 
-    def _process_image(self, image_path, prompt, e_context):
-        """处理图片识别请求"""
+    def _process_image(self, image_path, prompt, e_context, use_file_id=False):
+        """处理图片识别请求
+        
+        Args:
+            image_path: 图片路径或文件ID
+            prompt: 提示词
+            e_context: 上下文
+            use_file_id: 是否直接使用image_path作为file_id
+        """
         try:
             start_time = time.time()  # 在开始处理时就开始计时
             # 获取图片数据
             msg = e_context['context'].kwargs.get('msg')
             logger.info("[Yuewen] 开始处理图片识别请求")
             
-            image_bytes = self._get_image_data(msg, image_path)
-            if not image_bytes:
-                return "获取图片失败，请重试"
+            file_id = None
+            if use_file_id:
+                # 直接使用传入的image_path作为file_id
+                file_id = image_path
+                logger.info(f"[Yuewen] 使用已上传的图片文件ID: {file_id}")
+            else:
+                # 获取图片数据并上传
+                image_bytes = self._get_image_data(msg, image_path)
+                if not image_bytes:
+                    return "获取图片失败，请重试"
 
-            # 上传图片
-            file_id = self._upload_image(image_bytes)
-            if not file_id:
-                return "图片上传失败，请重试"
+                # 上传图片
+                file_id = self._upload_image(image_bytes)
+                if not file_id:
+                    return "图片上传失败，请重试"
+                
+                # 获取图片尺寸
+                try:
+                    import io
+                    from PIL import Image
+                    img = Image.open(io.BytesIO(image_bytes))
+                    width, height = img.size
+                    size = len(image_bytes)
+                    logger.info(f"[Yuewen] 图片尺寸: {width}x{height}, 大小: {size} 字节")
+                except:
+                    width = height = 800
+                    size = len(image_bytes)
+                    logger.warning("[Yuewen] 无法获取图片尺寸，使用默认值")
             
             # 如果没有当前会话或会话已超时，才创建新会话
             if not self.current_chat_id or (time.time() - self.last_active_time) > 180:
                 if not self.create_chat():
                     return "创建会话失败，请重试"
             
-            # 获取图片尺寸
-            try:
-                import io
-                from PIL import Image
-                img = Image.open(io.BytesIO(image_bytes))
-                width, height = img.size
-                size = len(image_bytes)
-                logger.info(f"[Yuewen] 图片尺寸: {width}x{height}, 大小: {size} 字节")
-            except:
-                width = height = 800
-                size = len(image_bytes)
-                logger.warning("[Yuewen] 无法获取图片尺寸，使用默认值")
+            # 构建图片附件信息
+            attachment = {
+                "attachmentType": "image/jpeg",
+                "attachmentId": file_id,
+                "name": f"n_v{random.getrandbits(128):032x}.jpg",
+                "usedPercent": -1
+            }
+            
+            # 如果不是直接使用file_id，添加图片尺寸信息
+            if not use_file_id and 'width' in locals() and 'height' in locals() and 'size' in locals():
+                attachment.update({
+                    "width": str(width),
+                    "height": str(height),
+                    "size": str(size)
+                })
+            else:
+                # 使用默认尺寸
+                attachment.update({
+                    "width": "800",
+                    "height": "800",
+                    "size": "100000"
+                })
             
             # 构建带图片的消息
             message = {
                 "chatId": self.current_chat_id,
                 "messageInfo": {
                     "text": prompt,
-                    "attachments": [{
-                        "attachmentType": "image/jpeg",
-                        "attachmentId": file_id,
-                        "name": f"n_v{random.getrandbits(128):032x}.jpg",
-                        "width": str(width),
-                        "height": str(height),
-                        "size": str(size),
-                        "usedPercent": -1
-                    }],
+                    "attachments": [attachment],
                     "author": {"role": "user"}
                 },
                 "messageMode": "SEND_MESSAGE",
@@ -1087,6 +1193,9 @@ class YuewenPlugin(Plugin):
         # 匹配识图命令模式
         img_cmd_match = re.match(f'^{pic_trigger}\\s*(\\d)?\\s*(.*)$', content, re.IGNORECASE)
         if img_cmd_match:
+            logger.info(f"[Yuewen] 收到识图命令: {content}")
+            
+            # 获取图片数量和提示词
             img_count = int(img_cmd_match.group(1)) if img_cmd_match.group(1) else 1
             prompt = img_cmd_match.group(2).strip() if img_cmd_match.group(2) else self.imgprompt
             
@@ -1121,6 +1230,167 @@ class YuewenPlugin(Plugin):
                     e_context['reply'] = reply
                     e_context.action = EventAction.BREAK_PASS
                     return
+            
+            # 尝试从channel获取最近的图片
+            channel = e_context["context"].kwargs.get("channel")
+            logger.info(f"[Yuewen] 获取channel对象: {type(channel).__name__ if channel else 'None'}")
+            
+            if channel and hasattr(channel, "recent_image_msgs"):
+                # 获取会话ID
+                session_id = e_context["context"].kwargs.get("session_id")
+                logger.info(f"[Yuewen] 当前会话ID: {session_id}")
+                
+                # 首先尝试直接使用会话ID获取最近图片
+                if session_id and session_id in channel.recent_image_msgs:
+                    recent_img_info = channel.recent_image_msgs.get(session_id)
+                    logger.info(f"[Yuewen] 找到会话 {session_id} 的最近图片消息: {recent_img_info.keys() if isinstance(recent_img_info, dict) else type(recent_img_info)}")
+                    
+                    # WX849 channel格式: {"time": time.time(), "msg": cmsg, "msg_id": cmsg.msg_id}
+                    if isinstance(recent_img_info, dict) and "msg" in recent_img_info:
+                        recent_msg = recent_img_info["msg"]
+                        logger.info(f"[Yuewen] 成功获取到最近图片消息: ID={recent_msg.msg_id if hasattr(recent_msg, 'msg_id') else 'unknown'}")
+                    # 直接存储消息对象的情况
+                    elif hasattr(recent_img_info, 'msg_id'):
+                        recent_msg = recent_img_info
+                        logger.info(f"[Yuewen] 成功获取到最近图片消息(直接格式): ID={recent_msg.msg_id}")
+                    else:
+                        logger.error(f"[Yuewen] 无法获取图片消息对象: {type(recent_img_info)}")
+                        recent_msg = None
+                    
+                    if recent_msg:
+                        try:
+                            # 确保图片消息已准备好
+                            if hasattr(recent_msg, "_prepare_fn") and not getattr(recent_msg, "_prepared", False):
+                                logger.info("[Yuewen] 准备图片消息...")
+                                recent_msg._prepare_fn()
+                                recent_msg._prepared = True
+                            
+                            # 获取图片内容
+                            image_content = None
+                            
+                            # 尝试不同属性获取图片内容
+                            if hasattr(recent_msg, "content"):
+                                image_content = recent_msg.content
+                                logger.info(f"[Yuewen] 从content属性获取图片: {image_content}")
+                            
+                            # 尝试从msg字典中获取
+                            if not image_content and hasattr(recent_msg, "msg") and isinstance(recent_msg.msg, dict):
+                                if "Content" in recent_msg.msg:
+                                    image_content = recent_msg.msg["Content"]
+                                    logger.info(f"[Yuewen] 从msg.Content获取图片: {image_content}")
+                                elif "FilePath" in recent_msg.msg:
+                                    image_content = recent_msg.msg["FilePath"]
+                                    logger.info(f"[Yuewen] 从msg.FilePath获取图片: {image_content}")
+                            
+                            # 尝试从raw_msg中获取
+                            if not image_content and hasattr(recent_msg, "raw_msg") and isinstance(recent_msg.raw_msg, dict):
+                                if "Content" in recent_msg.raw_msg:
+                                    image_content = recent_msg.raw_msg["Content"]
+                                    logger.info(f"[Yuewen] 从raw_msg.Content获取图片: {image_content}")
+                                elif "FilePath" in recent_msg.raw_msg:
+                                    image_content = recent_msg.raw_msg["FilePath"]
+                                    logger.info(f"[Yuewen] 从raw_msg.FilePath获取图片: {image_content}")
+                            
+                            # 尝试从path属性获取
+                            if not image_content and recent_img_info and isinstance(recent_img_info, dict) and "path" in recent_img_info:
+                                image_content = recent_img_info["path"]
+                                logger.info(f"[Yuewen] 从recent_img_info[path]获取图片: {image_content}")
+                            
+                            if image_content:
+                                logger.info(f"[Yuewen] 成功获取到图片内容，准备处理识图请求: {image_content}")
+                                
+                                # 获取图片数据
+                                image_data = self._get_image_data(recent_msg, image_content)
+                                
+                                if image_data:
+                                    logger.info(f"[Yuewen] 成功提取图片数据，大小: {len(image_data)} 字节")
+                                    
+                                    # 如果是单图模式
+                                    if img_count == 1:
+                                        # 上传图片
+                                        file_id = self._upload_image(image_data)
+                                        if file_id and self._check_file_status(file_id):
+                                            logger.info(f"[Yuewen] 图片上传成功，file_id: {file_id}, 开始处理识图请求")
+                                            result = self._process_image(file_id, prompt, e_context, use_file_id=True)
+                                            reply = Reply()
+                                            reply.type = ReplyType.TEXT
+                                            reply.content = result
+                                            e_context['reply'] = reply
+                                            e_context.action = EventAction.BREAK_PASS
+                                            return
+                                        else:
+                                            logger.error("[Yuewen] 图片上传或状态检查失败")
+                                    else:
+                                        # 多图模式的处理
+                                        logger.info(f"[Yuewen] 处理多图模式，当前图片为第1张，共需 {img_count} 张")
+                                        # 初始化多图片上传状态，并添加第一张图片
+                                        self.multi_image_data[waiting_id] = {
+                                            'count': img_count,
+                                            'current': 1,  # 已经处理了一张图片
+                                            'images': [],
+                                            'prompt': prompt
+                                        }
+                                        
+                                        # 上传图片
+                                        file_id = self._upload_image(image_data)
+                                        if file_id and self._check_file_status(file_id):
+                                            # 获取图片尺寸
+                                            try:
+                                                import io
+                                                from PIL import Image
+                                                img = Image.open(io.BytesIO(image_data))
+                                                width, height = img.size
+                                                size = len(image_data)
+                                            except Exception as e:
+                                                logger.error(f"[Yuewen] 获取图片尺寸失败: {e}")
+                                                width = height = 800
+                                                size = len(image_data)
+                                            
+                                            # 添加图片信息
+                                            self.multi_image_data[waiting_id]['images'].append({
+                                                'file_id': file_id,
+                                                'width': width,
+                                                'height': height,
+                                                'size': size
+                                            })
+                                            
+                                            if img_count > 1:
+                                                # 需要更多图片
+                                                reply = Reply()
+                                                reply.type = ReplyType.TEXT
+                                                reply.content = f"已接收第1张图片，请发送第2张图片"
+                                                e_context['reply'] = reply
+                                                e_context.action = EventAction.BREAK_PASS
+                                                return
+                                            else:
+                                                # 只需要一张图片，直接处理
+                                                result = self._process_multi_images(
+                                                    self.multi_image_data[waiting_id]['images'], 
+                                                    prompt, 
+                                                    e_context
+                                                )
+                                                reply = Reply()
+                                                reply.type = ReplyType.TEXT
+                                                reply.content = result
+                                                e_context['reply'] = reply
+                                                e_context.action = EventAction.BREAK_PASS
+                                                # 清理状态
+                                                del self.multi_image_data[waiting_id]
+                                                return
+                                else:
+                                    logger.error("[Yuewen] 无法从图片消息中提取图片数据")
+                            else:
+                                logger.error("[Yuewen] 图片消息中没有内容")
+                        except Exception as e:
+                            logger.error(f"[Yuewen] 处理最近图片消息时发生异常: {e}")
+                            logger.error(traceback.format_exc())
+                else:
+                    logger.info(f"[Yuewen] 会话 {session_id} 中没有找到最近的图片消息")
+            else:
+                logger.info("[Yuewen] 当前channel不支持recent_image_msgs")
+            
+            # 如果无法找到最近的图片，则进入等待图片模式
+            logger.info("[Yuewen] 没有找到可用的图片，进入等待图片模式")
             
             # 初始化多图片上传状态
             self.multi_image_data[waiting_id] = {
