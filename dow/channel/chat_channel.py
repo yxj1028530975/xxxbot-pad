@@ -195,13 +195,14 @@ class ChatChannel(Channel):
             logger.debug("[chat_channel] ready to handle context: type={}, content={}".format(context.type, context.content))
             if context.type == ContextType.TEXT or context.type == ContextType.IMAGE_CREATE:  # 文字和图片消息
                 context["channel"] = e_context["channel"]
-                
+
                 # 添加对trigger_prefix标志的检查，只有当trigger_prefix为True或未设置时，才调用AI进行回复
-                if context.get("trigger_prefix", True) == False:
-                    logger.info("[chat_channel] 消息不满足触发条件，跳过AI对话: content={}".format(context.content[:20]))
+                # 对于私聊消息，始终触发AI对话，不检查trigger_prefix
+                if context.get("isgroup", False) and context.get("trigger_prefix", True) == False:
+                    logger.info("[chat_channel] 群聊消息不满足触发条件，跳过AI对话: content={}".format(context.content[:20]))
                     # 不需要生成回复，直接返回空回复
                     return Reply()
-                
+
                 reply = super().build_reply_content(context.content, context)
             elif context.type == ContextType.VOICE:  # 语音消息
                 cmsg = context["msg"]

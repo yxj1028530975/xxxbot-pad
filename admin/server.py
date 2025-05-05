@@ -1728,6 +1728,8 @@ def setup_routes():
                     "admin",
                     "WechatAPI",
                     "utils",
+                    "dow/channel",
+                    "dow/lib",
                     "version.json",
                     "bot_core.py",
                     "main_config.toml.example",
