@@ -424,6 +424,11 @@
         <!-- 页脚 -->
         <footer class="footer mt-5 py-3 text-center animate__animated animate__fadeInUp">
             <div class="container">
+                <div class="disclaimer-banner bg-warning bg-opacity-10 p-2 mb-3 rounded shadow-sm">
+                    <p class="mb-0 fw-bold text-warning">
+                        <i class="bi bi-exclamation-triangle-fill me-1"></i> 免责声明：本项目仅供学习交流使用，严禁用于商业用途！
+                    </p>
+                </div>
                 <span class="text-muted">xxxbot-pad © 2025 - 技术支持 <a href="https://github.com/NanSsye/xxxbot-pad/" class="text-decoration-none" target="_blank">xxxTeam</a></span>
                 <div class="mt-2">
                     <a href="https://github.com/NanSsye/xxxbot-pad/" class="btn btn-sm btn-outline-secondary me-1">
@@ -432,7 +437,7 @@
                     <a href="#" class="btn btn-sm btn-outline-secondary me-1">
                         <i class="bi bi-discord"></i>
                     </a>
-                    <a href="#" class="btn btn-sm btn-outline-secondary">
+                    <a href="#" class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#disclaimerModal">
                         <i class="bi bi-question-circle"></i> 帮助
                     </a>
                 </div>
@@ -1104,6 +1109,45 @@
                     </button>
                     <button type="button" class="btn btn-outline-primary" id="modal-update-now-btn" style="padding: 0.375rem 0.75rem;">
                         <i class="bi bi-cloud-download me-1"></i>立即更新
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 免责声明弹窗 -->
+    <div class="modal fade" id="disclaimerModal" tabindex="-1" aria-labelledby="disclaimerModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content shadow-lg border-0">
+                <div class="modal-header bg-warning bg-opacity-10 text-dark">
+                    <h5 class="modal-title" id="disclaimerModalLabel">
+                        <i class="bi bi-exclamation-triangle-fill me-2 text-warning"></i>免责声明
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+                </div>
+                <div class="modal-body p-4">
+                    <div class="alert alert-warning mb-4">
+                        <h5 class="alert-heading"><i class="bi bi-exclamation-circle me-2"></i>重要提示</h5>
+                        <p class="mb-0"><strong>本项目仅供学习交流使用，严禁用于任何商业用途！</strong></p>
+                    </div>
+
+                    <div class="card mb-3 border-0 shadow-sm">
+                        <div class="card-body">
+                            <h5 class="card-title mb-3">免责声明详情</h5>
+                            <ol class="ps-3">
+                                <li class="mb-2">本项目是一个开源的学习和研究工具，仅用于技术研究和学习交流目的。</li>
+                                <li class="mb-2">使用本项目所产生的一切法律责任和风险，由使用者自行承担，与项目作者和贡献者无关。</li>
+                                <li class="mb-2">使用本项目前，请确保您的行为符合当地法律法规，并遵守相关服务条款。</li>
+                                <li class="mb-2">严禁将本项目用于任何商业用途或违法活动。</li>
+                                <li class="mb-2">项目作者保留随时修改本声明的权利。</li>
+                            </ol>
+                            <p class="mt-3 mb-0 text-muted small">使用本项目即表示您已阅读并同意上述免责声明。</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer justify-content-center border-0">
+                    <button type="button" class="btn btn-primary" data-bs-dismiss="modal">
+                        <i class="bi bi-check-circle me-1"></i>我已了解
                     </button>
                 </div>
             </div>
