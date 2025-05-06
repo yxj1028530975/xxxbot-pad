@@ -312,9 +312,9 @@ async function loadPlugins(framework = 'original') {
         } else if (framework === 'all') {
             apiEndpoint = '/api/all_plugins'; // 所有框架
         }
-        
+
         currentFramework = framework; // 保存当前框架类型
-        
+
         const response = await fetch(apiEndpoint);
         const data = await response.json();
 
@@ -880,7 +880,20 @@ async function savePluginConfig() {
         }
 
         // 获取编辑器内容
-        const content = document.getElementById('config-editor').value;
+        let content = document.getElementById('config-editor').value;
+
+        // 检查是否是JSON文件
+        if (configFile.toLowerCase().endsWith('.json')) {
+            try {
+                // 尝试解析JSON
+                const jsonObj = JSON.parse(content);
+                // 重新格式化JSON，确保格式正确
+                content = JSON.stringify(jsonObj, null, 4);
+                console.log("JSON格式化成功");
+            } catch (jsonError) {
+                throw new Error(`JSON格式错误: ${jsonError.message}`);
+            }
+        }
 
         // 显示保存中状态
         const saveBtn = document.getElementById('plugin-config-save');

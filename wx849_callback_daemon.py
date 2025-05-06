@@ -164,6 +164,7 @@ class MessageMonitor:
                     "收到图片消息" in line or  # 特别关注图片消息
                     "收到语音消息" in line or
                     "收到被@消息" in line or  # 添加被@消息类型
+                    "收到引用消息" in line or  # 添加引用消息类型
                     "MsgId" in line):
 
                     # 特别处理图片消息，确保它们被正确识别
@@ -269,6 +270,199 @@ class MessageMonitor:
                     return msg_data
                 else:
                     logger.warning(f"无法解析图片消息格式: {line[:100]}...")
+
+            # 特殊处理引用消息
+            if "收到引用消息" in line:
+                logger.info(f"检测到引用消息: {line}")
+                # 尝试匹配引用消息格式: 消息ID:1241182122 来自:47325400669@chatroom 发送人:wxid_lnbsshdobq7y22 内容:@小小x 酱爆说了啥 引用:{'MsgType': 1, ...}
+                quote_pattern = re.compile(r'消息ID:(\d+).*?来自:(.*?)[\s\:].*?发送人:(.*?)[\s\:].*?内容:(.*?)引用:(.*?)(?=$|\n)')
+                quote_match = quote_pattern.search(line)
+
+                if quote_match:
+                    msg_id, from_user, sender, content, quote_content = quote_match.groups()
+                    logger.info(f"成功解析引用消息: ID={msg_id}, 发送者={sender}, 内容={content[:30]}, 引用内容={quote_content[:30]}")
+
+                    # 尝试解析引用内容为JSON
+                    quoted_data = {}
+                    try:
+                        # 引用内容可能是JSON格式
+                        quoted_data = json.loads(quote_content.replace("'", "\""))
+
+                        # 检查是否是图片消息
+                        if quoted_data.get("MsgType") == 3:
+                            # 尝试从XML中提取图片信息
+                            try:
+                                # 检查是否有DEBUG日志包含完整的XML内容
+                                xml_content = None
+
+                                # 查找最近的XML日志
+                                xml_debug_pattern = re.compile(r'解析到的 XML 类型: 57, 完整内容: (.*?)$')
+
+                                # 从日志文件中查找最近的XML内容
+                                try:
+                                    # 使用全局变量log_file而不是self.log_file
+                                    with open(log_file, 'r', encoding='utf-8', errors='ignore') as f:
+                                        lines = f.readlines()
+                                        for i in range(len(lines) - 1, max(0, len(lines) - 20), -1):
+                                            xml_match = xml_debug_pattern.search(lines[i])
+                                            if xml_match:
+                                                xml_content = xml_match.group(1)
+                                                logger.info(f"找到XML内容，长度: {len(xml_content)}")
+                                                break
+                                except Exception as e:
+                                    logger.error(f"读取日志文件查找XML内容失败: {e}")
+
+                                # 如果找到了XML内容，从中提取refermsg部分
+                                if xml_content:
+                                    refermsg_match = re.search(r'<refermsg>(.*?)</refermsg>', xml_content, re.DOTALL)
+                                    if refermsg_match:
+                                        refermsg_content = refermsg_match.group(1)
+                                        logger.info(f"成功提取refermsg部分，长度: {len(refermsg_content)}")
+                                    else:
+                                        logger.warning(f"无法从XML内容中提取refermsg部分，xml_content前100字符: {xml_content[:100]}...")
+                                else:
+                                    # 如果没有找到XML内容，尝试从原始行中提取
+                                    logger.info(f"尝试从原始行中提取refermsg部分，原始行长度: {len(line)}")
+                                    refermsg_match = re.search(r'<refermsg>(.*?)</refermsg>', line, re.DOTALL)
+                                    if refermsg_match:
+                                        refermsg_content = refermsg_match.group(1)
+                                        logger.info(f"成功从原始行提取refermsg部分，长度: {len(refermsg_content)}")
+                                    else:
+                                        logger.warning(f"无法从原始行中提取refermsg部分，原始行前100字符: {line[:100]}...")
+
+                                # 提取svrid（消息ID）
+                                if 'refermsg_content' in locals():
+                                    svrid_match = re.search(r'<svrid>(.*?)</svrid>', refermsg_content)
+                                    if svrid_match:
+                                        quoted_data["svrid"] = svrid_match.group(1)
+                                        quoted_data["NewMsgId"] = svrid_match.group(1)
+                                        logger.info(f"成功从引用消息中提取svrid: {quoted_data['svrid']}")
+                                    else:
+                                        logger.warning(f"无法从引用消息中提取svrid，refermsg_content: {refermsg_content[:100]}...")
+                                else:
+                                    logger.warning("无法提取svrid，因为没有找到refermsg_content")
+
+                                # 提取fromusr（群ID）
+                                if 'refermsg_content' in locals():
+                                    fromusr_match = re.search(r'<fromusr>(.*?)</fromusr>', refermsg_content)
+                                    if fromusr_match:
+                                        quoted_data["fromusr"] = fromusr_match.group(1)
+                                        logger.info(f"成功从引用消息中提取fromusr: {quoted_data['fromusr']}")
+
+                                    # 提取chatusr（发送者ID）
+                                    chatusr_match = re.search(r'<chatusr>(.*?)</chatusr>', refermsg_content)
+                                    if chatusr_match:
+                                        quoted_data["chatusr"] = chatusr_match.group(1)
+                                        logger.info(f"成功从引用消息中提取chatusr: {quoted_data['chatusr']}")
+
+                                    # 提取displayname（发送者昵称）
+                                    displayname_match = re.search(r'<displayname>(.*?)</displayname>', refermsg_content)
+                                    if displayname_match:
+                                        quoted_data["Nickname"] = displayname_match.group(1)
+                                        logger.info(f"成功从引用消息中提取displayname: {quoted_data['Nickname']}")
+
+                                # 从XML内容中提取refermsg/content部分
+                                content_xml = None
+                                if xml_content:
+                                    # 将完整的XML内容添加到引用数据中
+                                    quoted_data["FullXmlContent"] = xml_content
+                                    logger.info(f"将完整的XML内容添加到引用数据中，长度: {len(xml_content)}")
+
+                                    # 优先从完整XML内容中提取
+                                    xml_match = re.search(r'<refermsg>.*?<content>(.*?)</content>.*?</refermsg>', xml_content, re.DOTALL)
+                                    if xml_match:
+                                        # 获取content内容并解码XML实体
+                                        content_xml = xml_match.group(1)
+                                        content_xml = content_xml.replace("&lt;", "<").replace("&gt;", ">")
+                                        logger.info(f"成功从XML内容中提取content部分，长度: {len(content_xml)}")
+                                    else:
+                                        logger.warning(f"无法从XML内容中提取content部分，xml_content前100字符: {xml_content[:100]}...")
+
+                                # 如果从XML内容中没有提取到，尝试从原始行中提取
+                                if not content_xml:
+                                    xml_match = re.search(r'<refermsg>.*?<content>(.*?)</content>.*?</refermsg>', line, re.DOTALL)
+                                    if xml_match:
+                                        # 获取content内容并解码XML实体
+                                        content_xml = xml_match.group(1)
+                                        content_xml = content_xml.replace("&lt;", "<").replace("&gt;", ">")
+                                        logger.info(f"成功从原始行中提取content部分，长度: {len(content_xml)}")
+                                    else:
+                                        logger.warning(f"无法从原始行中提取content部分，原始行前100字符: {line[:100]}...")
+
+                                # 提取图片信息
+                                if content_xml:
+                                    img_match = re.search(r'<img\s+(.*?)>', content_xml, re.DOTALL)
+                                    if img_match:
+                                        img_attrs = img_match.group(1)
+
+                                        # 提取各种属性
+                                        aeskey_match = re.search(r'aeskey="([^"]*)"', img_attrs)
+                                        cdnthumburl_match = re.search(r'cdnthumburl="([^"]*)"', img_attrs)
+                                        cdnmidimgurl_match = re.search(r'cdnmidimgurl="([^"]*)"', img_attrs)
+                                        length_match = re.search(r'length="([^"]*)"', img_attrs)
+                                        md5_match = re.search(r'md5="([^"]*)"', img_attrs)
+
+                                        # 添加到引用数据中
+                                        if aeskey_match:
+                                            quoted_data["aeskey"] = aeskey_match.group(1)
+                                        if cdnthumburl_match:
+                                            quoted_data["cdnthumburl"] = cdnthumburl_match.group(1)
+                                        if cdnmidimgurl_match:
+                                            quoted_data["cdnmidimgurl"] = cdnmidimgurl_match.group(1)
+                                        if length_match:
+                                            quoted_data["length"] = length_match.group(1)
+                                        if md5_match:
+                                            quoted_data["md5"] = md5_match.group(1)
+
+                                        # 添加图片内容到引用数据
+                                        quoted_data["Content"] = content_xml
+
+                                        logger.info(f"成功从引用消息中提取图片信息: aeskey={quoted_data.get('aeskey', '')}, cdnthumburl={quoted_data.get('cdnthumburl', '')[:30]}..., length={quoted_data.get('length', '')}")
+                                    else:
+                                        logger.warning(f"无法从content_xml中提取img元素，content_xml前100字符: {content_xml[:100]}...")
+                                else:
+                                    logger.warning("无法提取图片信息，因为没有找到content_xml")
+                            except Exception as e:
+                                logger.error(f"提取引用图片信息失败: {e}")
+                    except:
+                        # 如果解析失败，保留原始字符串
+                        quoted_data = {"Content": quote_content}
+
+                    # 检查是否@了机器人
+                    is_at_bot = False
+                    for bot_name in ["小小x", "小x"]:
+                        if f"@{bot_name}" in content:
+                            is_at_bot = True
+                            logger.info(f"检测到@机器人: @{bot_name}")
+                            break
+
+                    # 创建消息数据
+                    msg_data = {
+                        "MsgId": int(msg_id),
+                        "FromUserName": {"string": from_user},
+                        "MsgType": 49,  # XML消息类型
+                        "Content": content,
+                        "FromWxid": from_user,
+                        "SenderWxid": sender,
+                        "RawLogLine": line,  # 保存原始行
+                        "QuotedMessage": quoted_data,  # 添加引用消息数据
+                        "IsAtMessage": is_at_bot  # 设置是否@了机器人的标志
+                    }
+
+                    # 尝试从缓存添加发送者昵称
+                    if sender in user_nickname_cache:
+                        msg_data["SenderNickName"] = user_nickname_cache[sender]
+                        logger.info(f"为引用消息添加发送者昵称: {sender} -> {user_nickname_cache[sender]}")
+
+                    # 如果引用内容中有昵称，也添加到消息中
+                    if "Nickname" in quoted_data:
+                        msg_data["QuotedNickname"] = quoted_data["Nickname"]
+                        logger.info(f"添加被引用消息的发送者昵称: {quoted_data['Nickname']}")
+
+                    logger.info(f"成功从日志提取引用消息数据: ID={msg_id}, 发送者={sender}, 类型=49(XML)")
+                    return msg_data
+                else:
+                    logger.warning(f"无法解析引用消息格式: {line[:100]}...")
 
             # 特殊处理被@消息
             if "收到被@消息" in line:
