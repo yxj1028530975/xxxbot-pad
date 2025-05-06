@@ -280,21 +280,24 @@ class ChatChannel(Channel):
                 is_at_bot = context.get("is_at", False)
 
                 # 如果context中没有is_at标志，检查at_list中是否包含机器人wxid
-                if not is_at_bot and "at_list" in context.kwargs:
-                    # 遍历所有可能的机器人wxid
-                    for bot_wxid in ["wxid_p60yfpl5zg2m29", "wxid_uz9za1pqr3ea22", "wxid_l5im9jaxhr4412"]:
-                        if bot_wxid in context.kwargs["at_list"]:
-                            is_at_bot = True
-                            logger.debug(f"[chat_channel] 从at_list中检测到@机器人: {bot_wxid}")
-                            break
+                if not is_at_bot and "at_list" in context.kwargs and "IsAtMessage" in context.kwargs.get("msg", {}).msg:
+                    # 只有当IsAtMessage为True时，才检查at_list中是否包含机器人wxid
+                    if context.kwargs["msg"].msg["IsAtMessage"]:
+                        # 遍历所有可能的机器人wxid
+                        for bot_wxid in ["wxid_p60yfpl5zg2m29", "wxid_uz9za1pqr3ea22", "wxid_l5im9jaxhr4412"]:
+                            if bot_wxid in context.kwargs["at_list"]:
+                                is_at_bot = True
+                                logger.debug(f"[chat_channel] 从at_list中检测到@机器人: {bot_wxid}")
+                                break
 
-                # 检查消息内容中是否包含@机器人的文本
-                if not is_at_bot and context.content:
-                    for bot_name in ["小小x", "小x"]:
-                        if f"@{bot_name}" in context.content:
-                            is_at_bot = True
-                            logger.debug(f"[chat_channel] 从消息内容中检测到@机器人: @{bot_name}")
-                            break
+                # 检查消息内容中是否包含@机器人的文本，并且确认IsAtMessage为True
+                if not is_at_bot and context.content and "IsAtMessage" in context.kwargs.get("msg", {}).msg:
+                    if context.kwargs["msg"].msg["IsAtMessage"]:
+                        for bot_name in ["小小x", "小x"]:
+                            if f"@{bot_name}" in context.content:
+                                is_at_bot = True
+                                logger.debug(f"[chat_channel] 从消息内容中检测到@机器人: @{bot_name}")
+                                break
 
                 # 如果是@机器人的消息，按照文本消息处理
                 if is_at_bot:
