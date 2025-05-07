@@ -18,28 +18,41 @@ class DifyConversationManager(PluginBase):
         # 加载配置
         with open("plugins/DifyConversationManager/config.toml", "rb") as f:
             config = tomllib.load(f)
-        
+
         plugin_config = config["DifyConversationManager"]
-        
+
         # 基础配置
         self.enable = plugin_config["enable"]
         self.api_key = plugin_config["api-key"]
         self.base_url = plugin_config["base-url"]
         self.http_proxy = plugin_config.get("http-proxy", "")
-        
+
         # 命令配置
         self.command_prefix = plugin_config.get("command-prefix", "/dify")
         self.commands = plugin_config.get("commands", ["列表", "历史", "删除", "重命名", "帮助"])
         self.command_tip = plugin_config.get("command-tip", "使用 /dify 帮助 查看使用说明")
-        
+
         # 权限配置
         self.price = plugin_config.get("price", 0)
         self.admin_ignore = plugin_config.get("admin_ignore", True)
         self.whitelist_ignore = plugin_config.get("whitelist_ignore", True)
-        
+
         # 分页配置
         self.default_page_size = plugin_config.get("default-page-size", 20)
         self.max_page_size = plugin_config.get("max-page-size", 100)
+
+        # 加载管理员列表
+        try:
+            with open("main_config.toml", "rb") as f:
+                main_config = tomllib.load(f)
+            self.admins = main_config["XYBot"]["admins"]
+            logger.info(f"已加载管理员列表: {self.admins}")
+        except Exception as e:
+            logger.error(f"加载管理员列表失败: {e}")
+            self.admins = []
+
+        # 初始化数据库
+        self.db = XYBotDB()
 
     @on_text_message
     async def handle_text(self, bot: WechatAPIClient, message: dict) -> bool:
@@ -47,14 +60,14 @@ class DifyConversationManager(PluginBase):
             return True
 
         content = message["Content"].strip()
-        
+
         # 只响应 /dify 开头的命令
         if not content.startswith(self.command_prefix):
             return True
 
         # 提取命令部分
         cmd_content = content[len(self.command_prefix):].strip()
-        
+
         # 如果只输入 /dify，显示帮助菜单
         if not cmd_content:
             await bot.send_text_message(message["FromWxid"], self.command_tip)
@@ -63,6 +76,11 @@ class DifyConversationManager(PluginBase):
         # 处理删除所有对话的命令
         if cmd_content == "删除对话":
             await self.handle_delete_all_conversations(bot, message)
+            return False
+
+        # 处理删除所有用户所有对话的命令（仅管理员可用）
+        if cmd_content == "删除所有对话":
+            await self.handle_delete_all_users_conversations(bot, message)
             return False
 
         # 处理具体命令
@@ -96,6 +114,19 @@ class DifyConversationManager(PluginBase):
             "   删除指定的对话\n\n"
             f"4. {self.command_prefix} {self.commands[3]} <对话ID> <新名称>\n"
             "   重命名指定的对话\n\n"
+            f"5. {self.command_prefix} 删除对话\n"
+            "   删除当前用户或群聊的所有对话\n\n"
+        )
+
+        # 如果是管理员，显示管理员命令
+        if message["SenderWxid"] in self.admins:
+            help_text += (
+                "🔐 管理员命令：\n"
+                f"6. {self.command_prefix} 删除所有对话\n"
+                "   ⚠️ 删除系统中所有用户的所有对话\n\n"
+            )
+
+        help_text += (
             "示例：\n"
             f"{self.command_prefix} {self.commands[0]}\n"
             f"{self.command_prefix} {self.commands[1]} abc-123\n"
@@ -164,7 +195,7 @@ class DifyConversationManager(PluginBase):
             parts = params.split(maxsplit=1)
             if len(parts) != 2:
                 await bot.send_text_message(
-                    message["FromWxid"], 
+                    message["FromWxid"],
                     f"格式错误！正确格式：{self.command_prefix} {self.commands[3]} <对话ID> <新名称>"
                 )
                 return
@@ -172,12 +203,12 @@ class DifyConversationManager(PluginBase):
             conversation_id, new_name = parts
             if await self.rename_conversation(message["SenderWxid"], conversation_id, new_name):
                 await bot.send_text_message(
-                    message["FromWxid"], 
+                    message["FromWxid"],
                     f"✅ 成功将对话 {conversation_id} 重命名为「{new_name}」"
                 )
             else:
                 await bot.send_text_message(
-                    message["FromWxid"], 
+                    message["FromWxid"],
                     f"❌ 重命名对话 {conversation_id} 失败"
                 )
         except Exception as e:
@@ -193,7 +224,7 @@ class DifyConversationManager(PluginBase):
 
             # 确定要删除的用户ID
             target_user = chat_id if is_group else wxid
-            
+
             # 获取对话列表
             conversations = await self.get_conversations(target_user)
             if not conversations:
@@ -225,7 +256,7 @@ class DifyConversationManager(PluginBase):
                 output += f"🔹 群聊: {chat_id}\n"
             else:
                 output += f"🔹 用户: {wxid}\n"
-            
+
             output += f"✅ 成功删除: {success_count} 个对话\n"
             if failed_count > 0:
                 output += f"❌ 删除失败: {failed_count} 个对话\n"
@@ -233,7 +264,7 @@ class DifyConversationManager(PluginBase):
                     output += "失败的对话ID：\n"
                     for failed_id in failed_ids:
                         output += f"- {failed_id}\n"
-            
+
             # 发送结果
             if is_group:
                 await bot.send_at_message(chat_id, output, [wxid])
@@ -255,16 +286,16 @@ class DifyConversationManager(PluginBase):
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json"
             }
-            
+
             params = {
                 "user": user,
                 "last_id": last_id,
                 "limit": limit,
                 "sort_by": "-updated_at"
             }
-            
+
             url = f"{self.base_url}/conversations"
-            
+
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, headers=headers, params=params, proxy=self.http_proxy) as resp:
                     if resp.status == 200:
@@ -273,7 +304,7 @@ class DifyConversationManager(PluginBase):
                     else:
                         logger.error(f"获取对话列表失败: {resp.status} - {await resp.text()}")
                         return []
-                        
+
         except Exception as e:
             logger.error(f"获取对话列表异常: {e}")
             return []
@@ -285,10 +316,10 @@ class DifyConversationManager(PluginBase):
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json"
             }
-            
+
             data = {"user": user}
             url = f"{self.base_url}/conversations/{conversation_id}"
-            
+
             async with aiohttp.ClientSession() as session:
                 async with session.delete(url, headers=headers, json=data, proxy=self.http_proxy) as resp:
                     if resp.status == 200:
@@ -297,7 +328,7 @@ class DifyConversationManager(PluginBase):
                     else:
                         logger.error(f"删除对话失败: {resp.status} - {await resp.text()}")
                         return False
-                        
+
         except Exception as e:
             logger.error(f"删除对话异常: {e}")
             return False
@@ -309,16 +340,16 @@ class DifyConversationManager(PluginBase):
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json"
             }
-            
+
             params = {
                 "conversation_id": conversation_id,
                 "user": user,
                 "first_id": first_id,
                 "limit": limit
             }
-            
+
             url = f"{self.base_url}/messages"
-            
+
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, headers=headers, params=params, proxy=self.http_proxy) as resp:
                     if resp.status == 200:
@@ -327,7 +358,7 @@ class DifyConversationManager(PluginBase):
                     else:
                         logger.error(f"获取对话历史失败: {resp.status} - {await resp.text()}")
                         return []
-                        
+
         except Exception as e:
             logger.error(f"获取对话历史异常: {e}")
             return []
@@ -339,15 +370,15 @@ class DifyConversationManager(PluginBase):
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json"
             }
-            
+
             data = {
                 "name": new_name,
                 "auto_generate": False,
                 "user": user
             }
-            
+
             url = f"{self.base_url}/conversations/{conversation_id}/name"
-            
+
             async with aiohttp.ClientSession() as session:
                 async with session.post(url, headers=headers, json=data, proxy=self.http_proxy) as resp:
                     if resp.status == 200:
@@ -356,7 +387,7 @@ class DifyConversationManager(PluginBase):
                     else:
                         logger.error(f"重命名对话失败: {resp.status} - {await resp.text()}")
                         return False
-                        
+
         except Exception as e:
             logger.error(f"重命名对话异常: {e}")
             return False
