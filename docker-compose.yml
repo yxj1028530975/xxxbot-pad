@@ -8,7 +8,7 @@ services:
       - "9090:9090" # 管理后台端口
       - "3000:3000" # WeTTy终端端口
     volumes:
-      - ./app:/app # 直接映射当前目录下的app文件夹到容器的/app
+      - ./:/app # 直接映射当前目录下的app文件夹到容器的/app
       - redis_data:/var/lib/redis
 
 volumes:
