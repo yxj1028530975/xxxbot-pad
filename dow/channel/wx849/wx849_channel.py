@@ -4233,8 +4233,8 @@ class WX849Channel(ChatChannel):
                 else:
                     api_path_prefix = "/VXAPI"
 
-                # 使用 /VXAPI 前缀，与 WomenVoice 插件保持一致
-                api_path_prefix = "/VXAPI"
+                # 注意：之前这里强制使用/VXAPI前缀，现在根据协议版本动态选择
+                logger.debug(f"[WX849] 语音消息使用API路径前缀: {api_path_prefix} (适用于{protocol_version}协议)")
 
                 # 如果语音时长超过最大片段时长，将其分割成多个片段发送
                 if total_duration > max_segment_duration:

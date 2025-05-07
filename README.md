@@ -67,7 +67,7 @@ XXXBot 是一个基于微信的智能机器人系统，通过整合多种 API �
       </ul>
     </td>
     <td width="25%" align="center">
-      <img src="https://github.com/user-attachments/assets/76da4426-9028-452f-9953-7799a613382c" alt="XXXBot微信群" width="220">
+      <img src="https://github.com/user-attachments/assets/4abc1363-e910-432c-b06d-5ece9a1e5b74" alt="XXXBot微信群" width="220">
       <p><strong>XXXBot交流群</strong></p>
     </td>
     <td width="25%" align="center">

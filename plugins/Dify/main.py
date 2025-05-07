@@ -47,238 +47,9 @@ DIFY_ERROR_MESSAGE = "🙅对不起，Dify出现错误！\n"
 INSUFFICIENT_POINTS_MESSAGE = "😭你的积分不够啦！需要 {price} 积分"
 VOICE_TRANSCRIPTION_FAILED = "\n语音转文字失败"
 TEXT_TO_VOICE_FAILED = "\n文本转语音失败"
-CHAT_TIMEOUT = 3600  # 1小时超时
-CHAT_AWAY_TIMEOUT = 1800  # 30分钟自动离开
-MESSAGE_BUFFER_TIMEOUT = 10  # 消息缓冲区超时时间（秒）
-MAX_BUFFERED_MESSAGES = 10  # 最大缓冲消息数
+# 聊天室相关常量已移除
 
-# 聊天室消息模板
-CHAT_JOIN_MESSAGE = """✨ 欢迎来到聊天室！让我们开始愉快的对话吧~
-
-💡 基础指引：
-   📝 直接发消息与我对话
-   🚪 发送"退出聊天"离开
-   ⏰ 5分钟不说话自动暂离
-   🔄 30分钟无互动将退出
-
-🎮 聊天指令：
-   📊 发送"查看状态"
-   📈 发送"聊天室排行"
-   👤 发送"我的统计"
-   💤 发送"暂时离开"
-
-开始聊天吧！期待与你的精彩对话~ 🌟"""
-
-CHAT_LEAVE_MESSAGE = "👋 已退出聊天室，需要再次@我才能继续对话"
-CHAT_TIMEOUT_MESSAGE = "由于您已经1小时没有活动，已被移出聊天室。如需继续对话，请重新发送消息。"
-CHAT_AWAY_MESSAGE = "💤 已设置为离开状态，其他人将看到你正在休息"
-CHAT_BACK_MESSAGE = "🌟 欢迎回来！已恢复活跃状态"
-CHAT_AUTO_AWAY_MESSAGE = "由于您已经30分钟没有活动，已被自动设置为离开状态。"
-
-class UserStatus(Enum):
-    ACTIVE = "活跃"
-    AWAY = "离开"
-    INACTIVE = "未加入"
-
-@dataclass
-class UserStats:
-    total_messages: int = 0
-    total_chars: int = 0
-    join_count: int = 0
-    last_active: float = 0
-    total_active_time: float = 0
-    status: UserStatus = UserStatus.INACTIVE
-
-@dataclass
-class ChatRoomUser:
-    wxid: str
-    group_id: str
-    last_active: float
-    status: UserStatus = UserStatus.ACTIVE
-    stats: UserStats = field(default_factory=UserStats)
-
-@dataclass
-class MessageBuffer:
-    messages: list[str] = field(default_factory=list)
-    last_message_time: float = 0.0
-    timer_task: Optional[asyncio.Task] = None
-    message_count: int = 0
-    files: list[str] = field(default_factory=list)
-
-class ChatRoomManager:
-    def __init__(self):
-        self.active_users = {}
-        self.message_buffers = defaultdict(lambda: MessageBuffer([], 0.0, None))
-        self.user_stats: Dict[tuple[str, str], UserStats] = defaultdict(UserStats)
-
-    def add_user(self, group_id: str, user_wxid: str) -> None:
-        key = (group_id, user_wxid)
-        self.active_users[key] = ChatRoomUser(
-            wxid=user_wxid,
-            group_id=group_id,
-            last_active=time.time()
-        )
-        stats = self.user_stats[key]
-        stats.join_count += 1
-        stats.last_active = time.time()
-        stats.status = UserStatus.ACTIVE
-
-    def remove_user(self, group_id: str, user_wxid: str) -> None:
-        key = (group_id, user_wxid)
-        if key in self.active_users:
-            user = self.active_users[key]
-            stats = self.user_stats[key]
-            stats.total_active_time += time.time() - stats.last_active
-            stats.status = UserStatus.INACTIVE
-            del self.active_users[key]
-        if key in self.message_buffers:
-            buffer = self.message_buffers[key]
-            if buffer.timer_task and not buffer.timer_task.done():
-                buffer.timer_task.cancel()
-            del self.message_buffers[key]
-
-    def update_user_activity(self, group_id: str, user_wxid: str) -> None:
-        key = (group_id, user_wxid)
-        if key in self.active_users:
-            self.active_users[key].last_active = time.time()
-            stats = self.user_stats[key]
-            stats.total_messages += 1
-            stats.last_active = time.time()
-
-    def set_user_status(self, group_id: str, user_wxid: str, status: UserStatus) -> None:
-        key = (group_id, user_wxid)
-        if key in self.active_users:
-            self.active_users[key].status = status
-            self.user_stats[key].status = status
-
-    def get_user_status(self, group_id: str, user_wxid: str) -> UserStatus:
-        key = (group_id, user_wxid)
-        if key in self.active_users:
-            return self.active_users[key].status
-        return UserStatus.INACTIVE
-
-    def get_user_stats(self, group_id: str, user_wxid: str) -> UserStats:
-        return self.user_stats[(group_id, user_wxid)]
-
-    def get_room_stats(self, group_id: str) -> List[tuple[str, UserStats]]:
-        stats = []
-        for (g_id, wxid), user_stats in self.user_stats.items():
-            if g_id == group_id:
-                stats.append((wxid, user_stats))
-        return sorted(stats, key=lambda x: x[1].total_messages, reverse=True)
-
-    def get_active_users_count(self, group_id: str) -> tuple[int, int, int]:
-        active = 0
-        away = 0
-        total = 0
-        for (g_id, _), user in self.active_users.items():
-            if g_id == group_id:
-                total += 1
-                if user.status == UserStatus.ACTIVE:
-                    active += 1
-                elif user.status == UserStatus.AWAY:
-                    away += 1
-        return active, away, total
-
-    async def add_message_to_buffer(self, group_id: str, user_wxid: str, message: str, files: list[str] = None) -> None:
-        """添加消息到缓冲区"""
-        if files is None:
-            files = []
-
-        key = (group_id, user_wxid)
-        if key not in self.message_buffers:
-            self.message_buffers[key] = MessageBuffer()
-
-        buffer = self.message_buffers[key]
-        buffer.messages.append(message)
-        buffer.last_message_time = time.time()
-        buffer.message_count += 1
-        buffer.files.extend(files)  # 添加文件ID到缓冲区
-
-        logger.debug(f"成功添加消息到缓冲区 - 用户: {user_wxid}, 消息: {message}, 当前消息数: {buffer.message_count}, 文件: {files}")
-
-    def get_and_clear_buffer(self, group_id: str, user_wxid: str) -> Tuple[str, list[str]]:
-        """获取并清空缓冲区"""
-        key = (group_id, user_wxid)
-        buffer = self.message_buffers.get(key)
-        if buffer:
-            messages = "\n".join(buffer.messages)
-            files = buffer.files.copy()  # 复制文件ID列表
-            logger.debug(f"合并并清空缓冲区 - 用户: {user_wxid}, 合并消息: {messages}, 文件: {files}")
-            buffer.messages.clear()
-            buffer.message_count = 0
-            buffer.files.clear()  # 清空文件ID列表
-            return messages, files
-        return "", []
-
-    def is_user_active(self, group_id: str, user_wxid: str) -> bool:
-        key = (group_id, user_wxid)
-        if key not in self.active_users:
-            return False
-
-        user = self.active_users[key]
-        if time.time() - user.last_active > CHAT_TIMEOUT:
-            self.remove_user(group_id, user_wxid)
-            return False
-        return True
-
-    def check_and_remove_inactive_users(self) -> list[tuple[str, str]]:
-        current_time = time.time()
-        inactive_users = []
-
-        for (group_id, user_wxid), user in list(self.active_users.items()):
-            if user.status == UserStatus.ACTIVE and current_time - user.last_active > CHAT_AWAY_TIMEOUT:
-                self.set_user_status(group_id, user_wxid, UserStatus.AWAY)
-                inactive_users.append((group_id, user_wxid, "away"))
-            elif current_time - user.last_active > CHAT_TIMEOUT:
-                inactive_users.append((group_id, user_wxid, "timeout"))
-                self.remove_user(group_id, user_wxid)
-
-        return inactive_users
-
-    def format_user_stats(self, group_id: str, user_wxid: str, nickname: str = "未知用户") -> str:
-        stats = self.get_user_stats(group_id, user_wxid)
-        status = self.get_user_status(group_id, user_wxid)
-        active_time = int(stats.total_active_time / 60)
-        return f"""📊 {nickname} 的聊天室数据：
-
-🏷️ 当前状态：{status.value}
-💬 发送消息：{stats.total_messages} 条
-📝 总字数：{stats.total_chars} 字
-🔄 加入次数：{stats.join_count} 次
-⏱️ 活跃时间：{active_time} 分钟"""
-
-    def format_room_status(self, group_id: str) -> str:
-        active, away, total = self.get_active_users_count(group_id)
-        return f"""🏠 聊天室状态：
-
-👥 当前成员：{total} 人
-✨ 活跃成员：{active} 人
-💤 暂离成员：{away} 人"""
-
-    async def format_room_ranking(self, group_id: str, bot: WechatAPIClient, limit: int = 5) -> str:
-        stats = self.get_room_stats(group_id)
-        result = ["🏆 聊天室排行榜：\n"]
-
-        for i, (wxid, user_stats) in enumerate(stats[:limit], 1):
-            try:
-                nickname = await bot.get_nickname(wxid) or "未知用户"
-            except:
-                nickname = "未知用户"
-            result.append(f"{self._get_rank_emoji(i)} {nickname}")
-            result.append(f"   💬 {user_stats.total_messages}条消息")
-            result.append(f"   📝 {user_stats.total_chars}字")
-        return "\n".join(result)
-
-    @staticmethod
-    def _get_rank_emoji(rank: int) -> str:
-        if rank == 1:
-            return "🥇"
-        elif rank == 2:
-            return "🥈"
-        elif rank == 3:
-            return "🥉"
-        return f"{rank}."
+# 聊天室相关类已移除
 
 @dataclass
 class ModelConfig:
@@ -291,12 +62,11 @@ class ModelConfig:
 class Dify(PluginBase):
     description = "Dify插件"
     author = "老夏的金库"
-    version = "1.3.2"  # 更新版本号
+    version = "1.4.0"  # 更新版本号 - 移除聊天室功能
     is_ai_platform = True  # 标记为 AI 平台插件
 
     def __init__(self):
         super().__init__()
-        self.chat_manager = ChatRoomManager()
         self.user_models = {}  # 存储用户当前使用的模型
         try:
             with open("main_config.toml", "rb") as f:
@@ -321,7 +91,8 @@ class Dify(PluginBase):
             self.robot_names = plugin_config.get("robot-names", [])
             # 移除单独的 URL 配置，改为动态构建
             self.remember_user_model = plugin_config.get("remember_user_model", True)
-            self.chatroom_enable = plugin_config.get("chatroom_enable", True)  # 添加聊天室功能开关
+            # 聊天室功能已移除
+            self.support_agent_mode = plugin_config.get("support_agent_mode", True)  # 添加Agent模式支持开关
 
             # 加载所有模型配置
             self.models = {}
@@ -351,6 +122,10 @@ class Dify(PluginBase):
         self.files_dir = "files"
         # 创建文件存储目录
         os.makedirs(self.files_dir, exist_ok=True)
+
+        # 添加Agent模式相关属性
+        self.current_agent_thoughts = {}  # 存储当前Agent思考过程，格式: {conversation_id: [thought1, thought2, ...]}
+        self.agent_files = {}  # 存储Agent生成的文件，格式: {file_id: {url: "", type: "", belongs_to: ""}}
 
         # 创建唤醒词到模型的映射
         self.wakeup_word_to_model = {}
@@ -457,127 +232,10 @@ class Dify(PluginBase):
         return current_model, original_content, False
 
     async def check_and_notify_inactive_users(self, bot: WechatAPIClient):
-        # 如果聊天室功能关闭，则直接返回，不进行检查和提醒
-        if not self.chatroom_enable:
-            return
+        # 聊天室功能已移除
+        return
 
-        inactive_users = self.chat_manager.check_and_remove_inactive_users()
-        for group_id, user_wxid, status in inactive_users:
-            if status == "away":
-                await bot.send_at_message(group_id, "\n" + CHAT_AUTO_AWAY_MESSAGE, [user_wxid])
-            elif status == "timeout":
-                await bot.send_at_message(group_id, "\n" + CHAT_TIMEOUT_MESSAGE, [user_wxid])
-
-    async def process_buffered_messages(self, bot: WechatAPIClient, group_id: str, user_wxid: str):
-        logger.debug(f"开始处理缓冲消息 - 用户: {user_wxid}, 群组: {group_id}")
-        messages, files = self.chat_manager.get_and_clear_buffer(group_id, user_wxid)
-        logger.debug(f"从缓冲区获取到的消息: {messages}")
-        logger.debug(f"从缓冲区获取到的文件: {files}")
-
-        if messages is not None and messages.strip():
-            logger.debug(f"合并后的消息: {messages}")
-            message = {
-                "FromWxid": group_id,
-                "SenderWxid": user_wxid,
-                "Content": messages,
-                "IsGroup": True,
-                "MsgType": 1
-            }
-            logger.debug(f"准备检查积分")
-            if await self._check_point(bot, message):
-                logger.debug("积分检查通过，开始调用 Dify API")
-                try:
-                    # 检查是否有唤醒词或触发词
-                    model, processed_query, is_switch = self.get_model_from_message(messages, user_wxid)
-                    await self.dify(bot, message, processed_query, files=files, specific_model=model)
-                    logger.debug("成功调用 Dify API 并发送消息")
-                except Exception as e:
-                    logger.error(f"调用 Dify API 失败: {e}")
-                    logger.error(traceback.format_exc())
-                    await bot.send_at_message(group_id, "\n消息处理失败，请稍后重试。", [user_wxid])
-        else:
-            logger.debug("缓冲区为空或消息无效，无需处理")
-
-    async def _delayed_message_processing(self, bot: WechatAPIClient, group_id: str, user_wxid: str):
-        key = (group_id, user_wxid)
-        try:
-            logger.debug(f"开始延迟处理 - 用户: {user_wxid}, 群组: {group_id}")
-            await asyncio.sleep(MESSAGE_BUFFER_TIMEOUT)
-
-            buffer = self.chat_manager.message_buffers.get(key)
-            if buffer and buffer.messages:
-                logger.debug(f"缓冲区消息数: {len(buffer.messages)}")
-                logger.debug(f"最后消息时间: {time.time() - buffer.last_message_time:.2f}秒前")
-
-                if time.time() - buffer.last_message_time >= MESSAGE_BUFFER_TIMEOUT:
-                    logger.debug("开始处理缓冲消息")
-                    await self.process_buffered_messages(bot, group_id, user_wxid)
-                else:
-                    logger.debug("跳过处理 - 有新消息，重新调度")
-                    await self.schedule_message_processing(bot, group_id, user_wxid)
-        except asyncio.CancelledError:
-            logger.debug(f"定时器被取消 - 用户: {user_wxid}, 群组: {group_id}")
-        except Exception as e:
-            logger.error(f"处理消息缓冲区时出错: {e}")
-            await bot.send_at_message(group_id, "\n消息处理发生错误，请稍后重试。", [user_wxid])
-
-    async def schedule_message_processing(self, bot: WechatAPIClient, group_id: str, user_wxid: str):
-        key = (group_id, user_wxid)
-        if key not in self.chat_manager.message_buffers:
-            self.chat_manager.message_buffers[key] = MessageBuffer()
-
-        buffer = self.chat_manager.message_buffers[key]
-        logger.debug(f"安排消息处理 - 用户: {user_wxid}, 群组: {group_id}")
-
-        # 获取buffer中的消息内容
-        buffer_content = "\n".join(buffer.messages) if buffer.messages else ""
-
-        # 检查是否有最近的图片
-        image_content = await self.get_cached_image(group_id)
-        if image_content:
-            try:
-                logger.debug("发现最近的图片，准备上传到 Dify")
-                # 先检查是否有唤醒词获取对应模型
-                wakeup_model = None
-                for wakeup_word, model_config in self.wakeup_word_to_model.items():
-                    wakeup_lower = wakeup_word.lower()
-                    buffer_content_lower = buffer_content.lower()
-                    if buffer_content_lower.startswith(wakeup_lower) or f" {wakeup_lower}" in buffer_content_lower:
-                        wakeup_model = model_config
-                        break
-
-                # 如果没有找到唤醒词对应的模型，则使用用户当前的模型
-                model_config = wakeup_model or self.get_user_model(user_wxid)
-
-                file_id = await self.upload_file_to_dify(
-                    image_content,
-                    "image/jpeg",
-                    group_id,
-                    model_config=model_config  # 传递正确的模型配置
-                )
-                if file_id:
-                    logger.debug(f"图片上传成功，文件ID: {file_id}")
-                    buffer.files.append(file_id)  # 直接添加到buffer的files列表
-                    logger.debug(f"当前buffer中的文件: {buffer.files}")
-                else:
-                    logger.error("图片上传失败")
-            except Exception as e:
-                logger.error(f"处理图片失败: {e}")
-
-        if buffer.message_count >= MAX_BUFFERED_MESSAGES:
-            logger.debug("缓冲区已满，立即处理消息")
-            await self.process_buffered_messages(bot, group_id, user_wxid)
-            return
-
-        if buffer.timer_task and not buffer.timer_task.done():
-            logger.debug("取消已有定时器")
-            buffer.timer_task.cancel()
-
-        logger.debug("创建新定时器")
-        buffer.timer_task = asyncio.create_task(
-            self._delayed_message_processing(bot, group_id, user_wxid)
-        )
-        logger.debug(f"定时器任务已创建 - 用户: {user_wxid}")
+    # 聊天室相关方法已移除
 
     @on_text_message(priority=20)
     async def handle_text(self, bot: WechatAPIClient, message: dict):
@@ -644,12 +302,6 @@ class Dify(PluginBase):
         # 以下是群聊处理逻辑
         group_id = message["FromWxid"]
         user_wxid = message["SenderWxid"]
-
-        if content == "退出聊天":
-            if self.chat_manager.is_user_active(group_id, user_wxid):
-                self.chat_manager.remove_user(group_id, user_wxid)
-                await bot.send_at_message(group_id, "\n" + CHAT_LEAVE_MESSAGE, [user_wxid])
-            return
 
         # 添加对切换模型命令的特殊处理
         if content.endswith("切换"):
@@ -738,68 +390,29 @@ class Dify(PluginBase):
         # 继续处理@或命令的情况
         if is_at or is_command:
             # 群聊处理逻辑
-            if not self.chat_manager.is_user_active(group_id, user_wxid):
-                if is_at or is_command:
-                    # 根据配置决定是否加入聊天室
-                    if self.chatroom_enable:
-                        self.chat_manager.add_user(group_id, user_wxid)
-                        await bot.send_at_message(group_id, "\n" + CHAT_JOIN_MESSAGE, [user_wxid])
-
-                    query = content
-                    for robot_name in self.robot_names:
-                        query = query.replace(f"@{robot_name}", "").strip()
-                    if command in self.commands:
-                        query = query[len(command):].strip()
-                    if query:
-                        if await self._check_point(bot, message, model):
-                            # 检查是否有唤醒词或触发词
-                            model, processed_query, is_switch = self.get_model_from_message(query, message["SenderWxid"])
-                            await self.dify(bot, message, processed_query, files=files, specific_model=model)
+            query = content
+            for robot_name in self.robot_names:
+                query = query.replace(f"@{robot_name}", "").strip()
+            if command in self.commands:
+                query = query[len(command):].strip()
+            if query:
+                if await self._check_point(bot, message, model):
+                    # 检查是否有唤醒词或触发词
+                    model, processed_query, is_switch = self.get_model_from_message(query, message["SenderWxid"])
+                    await self.dify(bot, message, processed_query, files=files, specific_model=model)
             return
 
-        # 如果聊天室功能被禁用，则所有消息都需要@或命令触发
-        if not self.chatroom_enable:
-            if is_at or is_command:
-                query = content
-                for robot_name in self.robot_names:
-                    query = query.replace(f"@{robot_name}", "").strip()
-                if command in self.commands:
-                    query = query[len(command):].strip()
-                if query:
-                    if await self._check_point(bot, message):
-                        await self.dify(bot, message, query, files=files)
-            return
-
-        if content == "查看状态":
-            status_msg = self.chat_manager.format_room_status(group_id)
-            await bot.send_at_message(group_id, "\n" + status_msg, [user_wxid])
-            return
-        elif content == "暂时离开":
-            self.chat_manager.set_user_status(group_id, user_wxid, UserStatus.AWAY)
-            await bot.send_at_message(group_id, "\n" + CHAT_AWAY_MESSAGE, [user_wxid])
-            return
-        elif content == "回来了":
-            self.chat_manager.set_user_status(group_id, user_wxid, UserStatus.ACTIVE)
-            await bot.send_at_message(group_id, "\n" + CHAT_BACK_MESSAGE, [user_wxid])
-            return
-        elif content == "我的统计":
-            try:
-                nickname = await bot.get_nickname(user_wxid) or "未知用户"
-            except:
-                nickname = "未知用户"
-            stats_msg = self.chat_manager.format_user_stats(group_id, user_wxid, nickname)
-            await bot.send_at_message(group_id, "\n" + stats_msg, [user_wxid])
-            return
-        elif content == "聊天室排行":
-            ranking_msg = await self.chat_manager.format_room_ranking(group_id, bot)
-            await bot.send_at_message(group_id, "\n" + ranking_msg, [user_wxid])
-            return
-
-        self.chat_manager.update_user_activity(group_id, user_wxid)
-
-        if self.chat_manager.get_user_status(group_id, user_wxid) == UserStatus.AWAY:
-            self.chat_manager.set_user_status(group_id, user_wxid, UserStatus.ACTIVE)
-            await bot.send_at_message(group_id, "\n" + CHAT_BACK_MESSAGE, [user_wxid])
+        # 聊天室功能已移除，所有消息都需要@或命令触发
+        if is_at or is_command:
+            query = content
+            for robot_name in self.robot_names:
+                query = query.replace(f"@{robot_name}", "").strip()
+            if command in self.commands:
+                query = query[len(command):].strip()
+            if query:
+                if await self._check_point(bot, message):
+                    await self.dify(bot, message, query, files=files)
+        return
 
         if content:
             if is_at or is_command:
@@ -915,17 +528,7 @@ class Dify(PluginBase):
         group_id = message["FromWxid"]
         user_wxid = message["SenderWxid"]
 
-        if query == "退出聊天":
-            if self.chat_manager.is_user_active(group_id, user_wxid):
-                self.chat_manager.remove_user(group_id, user_wxid)
-                await bot.send_at_message(group_id, "\n" + CHAT_LEAVE_MESSAGE, [user_wxid])
-            return False
-
-        if not self.chat_manager.is_user_active(group_id, user_wxid):
-            # 根据配置决定是否加入聊天室并发送欢迎消息
-            self.chat_manager.add_user(group_id, user_wxid)
-            if self.chatroom_enable:
-                await bot.send_at_message(group_id, "\n" + CHAT_JOIN_MESSAGE, [user_wxid])
+        # 聊天室功能已移除
 
         logger.debug(f"提取到的 query: {query}")
 
@@ -1369,10 +972,11 @@ class Dify(PluginBase):
                 "user_username": user_username
             }
 
+            # 根据是否支持Agent模式，设置不同的请求参数
             payload = {
                 "inputs": inputs,
                 "query": processed_query,
-                "response_mode": "streaming",
+                "response_mode": "streaming",  # 始终使用流式响应
                 "conversation_id": conversation_id,
                 "user": message["FromWxid"],
                 "files": formatted_files,
@@ -1460,7 +1064,61 @@ class Dify(PluginBase):
                                     logger.debug(f"消息结束时过滤思考标签")
                                 elif event == "message_file":
                                     file_url = resp_json.get("url", "")
-                                    await self.dify_handle_image(bot, message, file_url, model_config=model)
+                                    file_id = resp_json.get("id", "")
+                                    file_type = resp_json.get("type", "image")
+                                    belongs_to = resp_json.get("belongs_to", "assistant")
+
+                                    # 存储文件信息
+                                    self.agent_files[file_id] = {
+                                        "url": file_url,
+                                        "type": file_type,
+                                        "belongs_to": belongs_to
+                                    }
+
+                                    # 处理文件
+                                    if file_type == "image":
+                                        await self.dify_handle_image(bot, message, file_url, model_config=model)
+                                    else:
+                                        logger.info(f"收到非图片类型文件: {file_type}, ID: {file_id}, URL: {file_url}")
+                                elif event == "agent_thought":
+                                    # 处理Agent思考过程
+                                    if self.support_agent_mode:
+                                        thought_id = resp_json.get("id", "")
+                                        message_id = resp_json.get("message_id", "")
+                                        conversation_id = resp_json.get("conversation_id", "")
+                                        position = resp_json.get("position", 0)
+                                        thought = resp_json.get("thought", "")
+                                        observation = resp_json.get("observation", "")
+                                        tool = resp_json.get("tool", "")
+                                        tool_input = resp_json.get("tool_input", "")
+                                        message_files = resp_json.get("message_files", [])
+
+                                        # 记录思考过程
+                                        if conversation_id not in self.current_agent_thoughts:
+                                            self.current_agent_thoughts[conversation_id] = []
+
+                                        self.current_agent_thoughts[conversation_id].append({
+                                            "id": thought_id,
+                                            "message_id": message_id,
+                                            "position": position,
+                                            "thought": thought,
+                                            "observation": observation,
+                                            "tool": tool,
+                                            "tool_input": tool_input,
+                                            "files": message_files
+                                        })
+
+                                        logger.debug(f"Agent思考: {thought[:100]}...")
+                                        if tool:
+                                            logger.debug(f"使用工具: {tool}, 输入: {tool_input}")
+                                        if observation:
+                                            logger.debug(f"观察结果: {observation[:100]}...")
+                                elif event == "agent_message":
+                                    # 处理Agent消息
+                                    if self.support_agent_mode:
+                                        answer = resp_json.get("answer", "")
+                                        ai_resp += answer
+                                        logger.debug(f"Agent消息: {answer}")
                                 elif event == "error":
                                     await self.dify_handle_error(bot, message,
                                                                 resp_json.get("task_id", ""),
@@ -1742,6 +1400,27 @@ class Dify(PluginBase):
         think_pattern = r'<think>.*?</think>'
         text = re.sub(think_pattern, '', text, flags=re.DOTALL)
         logger.debug(f"过滤思考标签后的文本: {text[:100]}...")
+
+        # 获取会话ID，用于查找Agent思考过程
+        conversation_id = self.db.get_llm_thread_id(message["FromWxid"], namespace="dify")
+
+        # 如果启用了Agent模式且有思考过程，可以在这里处理
+        if self.support_agent_mode and conversation_id in self.current_agent_thoughts:
+            thoughts = self.current_agent_thoughts[conversation_id]
+            if thoughts:
+                logger.debug(f"发现Agent思考过程，共{len(thoughts)}条")
+                # 这里可以根据需要处理思考过程，例如添加到消息中
+                # 例如：添加使用的工具信息
+                tools_used = []
+                for thought in thoughts:
+                    if thought.get("tool") and thought["tool"] not in tools_used:
+                        tools_used.append(thought["tool"])
+
+                if tools_used:
+                    logger.info(f"Agent使用了以下工具: {', '.join(tools_used)}")
+
+                # 清除已处理的思考过程
+                self.current_agent_thoughts[conversation_id] = []
 
         # 匹配Dify返回的图片引用格式
         image_pattern = r'\[(.*?)\]\((.*?)\)'

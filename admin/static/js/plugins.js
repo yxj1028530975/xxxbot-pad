@@ -87,8 +87,8 @@ function closeModalManually(modalId) {
 // 插件市场API配置
 const PLUGIN_MARKET_API = {
     BASE_URL: 'http://xianan.xin:1562/api',
-    LIST: '/plugins?status=approved',
-    SUBMIT: '/plugins',
+    LIST: '/plugins/?status=approved',  // 添加尾部斜杠，避免重定向
+    SUBMIT: '/plugins/',  // 添加尾部斜杠，避免重定向
     INSTALL: '/plugins/install/',
     CACHE_KEY: 'xybot_plugin_market_cache',
     CACHE_EXPIRY: 3600000 // 缓存有效期1小时（毫秒）

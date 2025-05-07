@@ -12,8 +12,8 @@ from utils.plugin_base import PluginBase
 
 class GroupWelcome(PluginBase):
     description = "进群欢迎"
-    author = "HenryXiaoYang"
-    version = "1.0.0"
+    author = "xxxbot"
+    version = "1.1.0"  # 更新版本号，添加了控制是否发送文件的功能
 
     def __init__(self):
         super().__init__()
@@ -26,14 +26,17 @@ class GroupWelcome(PluginBase):
         self.enable = config["enable"]
         self.welcome_message = config["welcome-message"]
         self.url = config["url"]
+        # 是否发送PDF文件，默认为True
+        self.send_file = config.get("send-file", True)
 
         # PDF文件路径
         self.pdf_path = os.path.join("plugins", "GroupWelcome", "temp", "xxxbot项目说明.pdf")
-        # 检查PDF文件是否存在
-        if os.path.exists(self.pdf_path):
-            logger.info(f"找到项目说明PDF文件: {self.pdf_path}")
-        else:
-            logger.warning(f"项目说明PDF文件不存在: {self.pdf_path}")
+        # 只有在需要发送文件时才检查文件是否存在
+        if self.send_file:
+            if os.path.exists(self.pdf_path):
+                logger.info(f"找到项目说明PDF文件: {self.pdf_path}")
+            else:
+                logger.warning(f"项目说明PDF文件不存在: {self.pdf_path}")
 
     @on_system_message
     async def group_welcome(self, bot: WechatAPIClient, message: dict):
@@ -173,8 +176,9 @@ class GroupWelcome(PluginBase):
                                             thumb_url=avatar_url
                                             )
 
-                    # 发送项目说明PDF文件
-                    await self.send_pdf_file(bot, message["FromWxid"])
+                    # 根据配置决定是否发送项目说明PDF文件
+                    if self.send_file:
+                        await self.send_pdf_file(bot, message["FromWxid"])
                 except Exception as e:
                     logger.error(f"获取群成员信息失败: {e}")
                     # 如果获取失败，使用默认头像发送欢迎消息
@@ -185,8 +189,9 @@ class GroupWelcome(PluginBase):
                                             thumb_url=""
                                             )
 
-                    # 发送项目说明PDF文件
-                    await self.send_pdf_file(bot, message["FromWxid"])
+                    # 根据配置决定是否发送项目说明PDF文件
+                    if self.send_file:
+                        await self.send_pdf_file(bot, message["FromWxid"])
 
     @staticmethod
     def _parse_member_info(root: ET.Element, link_name: str = "names") -> list[dict]:

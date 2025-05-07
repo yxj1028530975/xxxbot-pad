@@ -2,9 +2,10 @@
 enable = true          # 是否启用插件
 default-model = "学姐"  # 默认使用的模型
 commands = ["聊天", "AI"]
-chatroom_enable = false  # 是否启用聊天室功能：
-                        # true - 用户@机器人后会自动进入聊天室，之后无需@即可聊天
-                        # false - 每次对话都需要@或使用触发词，不会进入持续聊天模式
+# 聊天室功能已移除
+support_agent_mode = true  # 是否支持Agent模式：
+                          # true - 支持Agent模式，可以处理agent_thought、agent_message等事件
+                          # false - 仅支持基础聊天模式
 command-tip = """-----XYBot-----
 💬AI聊天指令：
 1. 切换模型（将会一直保持到下次切换）：
