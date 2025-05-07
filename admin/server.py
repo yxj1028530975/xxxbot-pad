@@ -3496,25 +3496,8 @@ except:
             os.makedirs(os.path.dirname(full_path), exist_ok=True)
 
             # 写入文件内容
-            # 如果是TOML文件，自动转义双引号
-            if path.endswith('.toml'):
-                # 尝试解析TOML文件内容，如果解析失败，可能是因为双引号未转义
-                try:
-                    import tomllib
-                except ImportError:
-                    try:
-                        import tomli as tomllib
-                    except ImportError:
-                        # 如果tomllib和tomli都不可用，则不进行验证
-                        pass
-
-                # 不直接修改内容，因为可能会破坏用户手动编辑的格式
-                # 但我们可以检查是否有未转义的双引号
-                # 这里我们不做复杂的解析，只是简单地转义所有双引号
-                # 这可能会导致已经转义的双引号被重复转义，但这不会影响TOML的解析
-                content = content.replace('"', '\\"')
-                # 修复可能的重复转义
-                content = content.replace('\\\\"', '\\"')
+            # 我们不再自动转义TOML文件中的双引号，因为这会破坏文件格式
+            # 对于通知设置等特定API，我们在API层面处理双引号转义
 
             with open(full_path, 'w', encoding='utf-8') as f:
                 f.write(content)
