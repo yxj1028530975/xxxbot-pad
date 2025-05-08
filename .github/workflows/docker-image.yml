@@ -26,4 +26,4 @@ jobs:
       with:
         push: true
         file: ./Dockerfile   # 指定 Dockerfile 路径
-        tags: ricebug/w-xxxbot:$(date +%s)  
+        tags: ricebug/w-xxxbot:lastest 
