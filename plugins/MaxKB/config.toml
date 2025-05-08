@@ -1,0 +1,5 @@
+[MaxKB]
+enable = true
+command = ["maxkb"]
+base_url = "http://1.94.234.11:8088/api/application/chat_message/09c2d34c-2bbf-11f0-bc73-0242ac1a0002"
+authorization = "application-e42fd5aba3841deb29eadf946e58ccd3"
