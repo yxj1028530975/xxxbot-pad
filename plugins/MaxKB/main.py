@@ -53,7 +53,7 @@ class MaxKB(PluginBase):
         response = requests.request("POST", self.base_url, headers=headers, data=payload)
         response_data = json.loads(response.text)
         content = response_data["data"]["content"]
-        content = re.sub(r'<details>.*?</details>', '', content)
+        content = re.sub(r'<details>[\s\S]*?</details>', '', content)
         if response_data["code"] == 200:
             out_message = (f"{content}")
         else:
@@ -83,7 +83,7 @@ class MaxKB(PluginBase):
         response = requests.request("POST", self.base_url, headers=headers, data=payload)
         response_data = json.loads(response.text)
         content = response_data["data"]["content"]
-        content = re.sub(r'<details>.*?</details>', '', content)
+        content = re.sub(r'<details>[\s\S]*?</details>', '', content)
         if response_data["code"] == 200:
             out_message = (f"{content}")
         else:
