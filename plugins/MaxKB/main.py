@@ -36,10 +36,10 @@ class MaxKB(PluginBase):
             return
 
         content = str(message["Content"]).strip()
-        command = content.split(" ")
+        # command = content.split(" ")
 
-        if not len(command) or command[0] not in self.command:
-            return
+        # if not len(command) or command[0] not in self.command:
+        #     return
         
         payload = json.dumps({
             "message": content,
@@ -53,7 +53,7 @@ class MaxKB(PluginBase):
         response = requests.request("POST", self.base_url, headers=headers, data=payload)
         response_data = json.loads(response.text)
         content = response_data["data"]["content"]
-        content = re.sub(r'<details>[\s\S]*?</details>', '', content)
+        content = re.sub(r'\n<details>[\s\S]*?</details>\n\n', '', content)
         if response_data["code"] == 200:
             out_message = (f"{content}")
         else:
@@ -66,10 +66,10 @@ class MaxKB(PluginBase):
             return
 
         content = str(message["Content"]).strip()
-        command = re.split(r'[\s\u2005]+', content)
+        # command = re.split(r'[\s\u2005]+', content)
         
-        if len(command) < 2 or command[1] not in self.command:
-            return
+        # if len(command) < 2 or command[1] not in self.command:
+        #     return
         
         payload = json.dumps({
             "message": content,
@@ -83,7 +83,7 @@ class MaxKB(PluginBase):
         response = requests.request("POST", self.base_url, headers=headers, data=payload)
         response_data = json.loads(response.text)
         content = response_data["data"]["content"]
-        content = re.sub(r'<details>[\s\S]*?</details>', '', content)
+        content = re.sub(r'\n<details>[\s\S]*?</details>\n\n', '', content)
         if response_data["code"] == 200:
             out_message = (f"{content}")
         else:
