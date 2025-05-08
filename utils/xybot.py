@@ -3,6 +3,8 @@ import xml.etree.ElementTree as ET
 from typing import Dict, Any
 import asyncio
 import io
+import html
+import re
 
 from loguru import logger
 
@@ -937,6 +939,26 @@ class XYBot:
                 quote_message["md5"] = quote_appmsg.find("md5").text if isinstance(quote_appmsg.find("md5"), ET.Element) else ""
                 quote_message["statextstr"] = quote_appmsg.find("statextstr").text if isinstance(quote_appmsg.find("statextstr"), ET.Element) else ""
                 quote_message["directshare"] = int(quote_appmsg.find("directshare").text) if isinstance(quote_appmsg.find("directshare"), ET.Element) else 0
+
+            elif quote_message["MsgType"] == 3:  # 处理引用图片，以这个cdnthumbaeskey为图片缓存的唯一标识，方便后续在dow插件里根据cdnthumbaeskey获取到相应的图片
+                quote_message["NewMsgId"] = refermsg.find("svrid").text
+                quote_message["ToWxid"] = refermsg.find("fromusr").text
+                quote_message["FromWxid"] = refermsg.find("chatusr").text
+                quote_message["Nickname"] = refermsg.find("displayname").text
+                quote_message["MsgSource"] = refermsg.find("msgsource").text
+                quote_message["Content"] = refermsg.find("content").text
+                quote_message["Createtime"] = refermsg.find("createtime").text
+
+                quote_root = refermsg.find("content").text
+                unescaped_inner_xml = html.unescape(quote_root)
+                match = re.search(r'cdnthumbaeskey="([^"]+)"', unescaped_inner_xml)
+                if match:
+                    cdnthumbaeskey = match.group(1)
+                    logger.debug(f"cdnthumbaeskey: {cdnthumbaeskey}")
+                    quote_message["cdnthumbaeskey"]  = cdnthumbaeskey
+                else:
+                    logger.debug("cdnthumbaeskey not found.")
+                    quote_message["cdnthumbaeskey"] = ""
 
         except Exception as e:
             logger.error("解析引用消息失败: {}, 完整内容: {}", e, message["Content"])
