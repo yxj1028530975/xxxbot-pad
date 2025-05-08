@@ -571,13 +571,8 @@ class XYBot:
                     message.get("MsgId", ""), message["FromWxid"],
                     message["SenderWxid"], message["Ats"], message["Content"])
 
-        # 检查是否是群聊消息
-        is_group_chat = message["FromWxid"].endswith("@chatroom")
-
-        # 在群聊中，只处理@消息，忽略普通消息
-        if is_group_chat and self.wxid not in message.get("Ats", []):
-            logger.debug("群聊中的非@消息，忽略处理")
-            return
+        # 群聊消息和私聊消息都处理
+        # 无论是否@机器人，都处理消息
 
         if self.ignore_check(message["FromWxid"], message["SenderWxid"]):
             if self.ignore_protection or not protector.check(14400):
@@ -1330,6 +1325,60 @@ class XYBot:
                                     if result is False:
                                         return True
                                 break
+
+                    # 4.1 检查插件的command属性（单数形式，如VideoDemand插件）
+                    if hasattr(plugin, 'command') and plugin.command:
+                        # 处理列表类型的command
+                        if isinstance(plugin.command, list):
+                            for cmd in plugin.command:
+                                if isinstance(cmd, str) and content.lower() == cmd.lower():
+                                    logger.info(f"检测到插件 {plugin_name} 的命令(单数形式): {cmd}")
+
+                                    # 检查插件是否有处理文本消息的方法
+                                    text_message_method = None
+                                    for method_name in dir(plugin):
+                                        method = getattr(plugin, method_name)
+                                        if hasattr(method, '_event_type') and method._event_type == 'text_message':
+                                            text_message_method = method
+                                            break
+
+                                    if text_message_method:
+                                        # 创建一个临时消息对象，模拟文本消息
+                                        temp_message = message.copy()
+                                        # 使用处理后的内容（移除了@部分）
+                                        temp_message["Content"] = content
+
+                                        # 调用插件的text_message处理方法
+                                        result = await text_message_method(self.bot, temp_message)
+
+                                        # 如果插件返回False，表示阻止后续处理
+                                        if result is False:
+                                            return True
+                                    break
+                        # 处理字符串类型的command
+                        elif isinstance(plugin.command, str) and content.lower() == plugin.command.lower():
+                            logger.info(f"检测到插件 {plugin_name} 的命令(单数形式): {plugin.command}")
+
+                            # 检查插件是否有处理文本消息的方法
+                            text_message_method = None
+                            for method_name in dir(plugin):
+                                method = getattr(plugin, method_name)
+                                if hasattr(method, '_event_type') and method._event_type == 'text_message':
+                                    text_message_method = method
+                                    break
+
+                            if text_message_method:
+                                # 创建一个临时消息对象，模拟文本消息
+                                temp_message = message.copy()
+                                # 使用处理后的内容（移除了@部分）
+                                temp_message["Content"] = content
+
+                                # 调用插件的text_message处理方法
+                                result = await text_message_method(self.bot, temp_message)
+
+                                # 如果插件返回False，表示阻止后续处理
+                                if result is False:
+                                    return True
 
                     # 5. 检查插件的所有可能的command属性
                     # 自动检测插件的所有属性，查找可能的命令
