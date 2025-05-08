@@ -1302,19 +1302,33 @@ class XYBot:
                     # 4. 检查插件的commands属性（常见于AI对话插件）
                     if hasattr(plugin, 'commands') and plugin.commands:
                         for command in plugin.commands:
-                            if content.lower().startswith(command.lower()):
+                            # 检查两种情况：
+                            # 1. 内容以命令开头（前缀匹配）
+                            # 2. 内容的第一个词与命令完全匹配（完全匹配，用于FastGPT等插件）
+                            content_first_word = content.split(" ", 1)[0].lower()
+                            if content.lower().startswith(command.lower()) or content_first_word == command.lower():
                                 logger.info(f"检测到插件 {plugin_name} 的命令: {command}")
 
-                                # 检查插件是否有处理@消息的方法
+                                # 检查插件是否有处理文本消息的方法
+                                text_message_method = None
                                 for method_name in dir(plugin):
                                     method = getattr(plugin, method_name)
-                                    if hasattr(method, '_event_type') and method._event_type == 'at_message':
-                                        # 调用插件的at_message处理方法
-                                        result = await method(self.bot, message)
-                                        # 如果插件返回False，表示阻止后续处理
-                                        if result is False:
-                                            return True
+                                    if hasattr(method, '_event_type') and method._event_type == 'text_message':
+                                        text_message_method = method
                                         break
+
+                                if text_message_method:
+                                    # 创建一个临时消息对象，模拟文本消息
+                                    temp_message = message.copy()
+                                    # 使用处理后的内容（移除了@部分）
+                                    temp_message["Content"] = content
+
+                                    # 调用插件的text_message处理方法
+                                    result = await text_message_method(self.bot, temp_message)
+
+                                    # 如果插件返回False，表示阻止后续处理
+                                    if result is False:
+                                        return True
                                 break
 
                     # 5. 检查插件的所有可能的command属性
