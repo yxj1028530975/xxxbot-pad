@@ -41,7 +41,7 @@ DOW_CALLBACK_KEY = ""  # 从DOW框架启动日志中获取，或在配置中设�
 config_file = "wx849_callback_config.json"
 if os.path.exists(config_file):
     try:
-        with open(config_file, "r", encoding="utf-8") as f:
+        with open(config_file, "r", encoding="utf-8-sig") as f:  # 修改这里，使用utf-8-sig处理UTF-8 BOM
             config = json.load(f)
             DOW_CALLBACK_URL = config.get("callback_url", DOW_CALLBACK_URL)
             DOW_CALLBACK_KEY = config.get("callback_key", DOW_CALLBACK_KEY)
@@ -509,7 +509,7 @@ class MessageMonitor:
                         msg_data["MsgSource"] = msg_source
 
                     return msg_data
-                
+
                 # 特殊处理被@消息
             if "收到链接分享消息" in line:
                 logger.info(f"检测到收到链接分享消息: {line}")

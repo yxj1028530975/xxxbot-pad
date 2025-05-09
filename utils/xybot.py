@@ -45,6 +45,12 @@ class XYBot:
 
         self.ignore_protection = main_config.get("XYBot", {}).get("ignore-protection", False)
 
+        # 读取群聊唤醒词配置
+        xybot_config = main_config.get("XYBot", {})
+        self.group_wakeup_words = xybot_config.get("group-wakeup-words", ["bot"])
+        self.enable_group_wakeup = xybot_config.get("enable-group-wakeup", True)
+        logger.info(f"群聊唤醒词: {self.group_wakeup_words}, 启用状态: {self.enable_group_wakeup}")
+
         # 从配置文件中读取消息过滤设置
         try:
             # 尝试从顶层读取设置
@@ -571,10 +577,12 @@ class XYBot:
                     message.get("MsgId", ""), message["FromWxid"],
                     message["SenderWxid"], message["Ats"], message["Content"])
 
+        # 检查是否需要处理该消息（群聊唤醒词检查）
+        should_process = self.check_group_wakeup_word(message)
+
         # 群聊消息和私聊消息都处理
         # 无论是否@机器人，都处理消息
-
-        if self.ignore_check(message["FromWxid"], message["SenderWxid"]):
+        if should_process and self.ignore_check(message["FromWxid"], message["SenderWxid"]):
             if self.ignore_protection or not protector.check(14400):
                 await EventManager.emit("text_message", self.bot, message)
             else:
@@ -796,7 +804,10 @@ class XYBot:
             is_group=message["IsGroup"]
         )
 
-        if self.ignore_check(message["FromWxid"], message["ActualUserWxid"]):
+        # 检查是否需要处理该消息（群聊唤醒词检查）
+        should_process = self.check_group_wakeup_word(message)
+
+        if should_process and self.ignore_check(message["FromWxid"], message["ActualUserWxid"]):
             if self.ignore_protection or not protector.check(14400):
                 await EventManager.emit("emoji_message", self.bot, message)
             else:
@@ -1486,6 +1497,33 @@ class XYBot:
             # 恢复原始消息内容
             message["Content"] = original_message_content
 
+        return False
+
+    def check_group_wakeup_word(self, message: Dict[str, Any]) -> bool:
+        """检查群聊消息是否包含唤醒词
+
+        Args:
+            message: 消息字典
+
+        Returns:
+            bool: 如果消息应该被处理返回True，否则返回False
+        """
+        # 如果不是群聊消息或者未启用群聊唤醒词功能，直接返回True（继续处理）
+        if not message.get("IsGroup", False) or not self.enable_group_wakeup:
+            return True
+
+        content = message.get("Content", "").strip()
+        # 检查消息是否以任一唤醒词开头
+        for wakeup_word in self.group_wakeup_words:
+            if content.lower().startswith(wakeup_word.lower()):
+                # 移除唤醒词，保留实际命令内容
+                message["OriginalContent"] = message["Content"]
+                message["Content"] = content[len(wakeup_word):].strip()
+                logger.info(f"检测到群聊唤醒词: {wakeup_word}, 处理后内容: {message['Content']}")
+                return True
+
+        # 没有唤醒词，不处理该消息
+        logger.debug(f"群聊消息未包含唤醒词，忽略处理: {content}")
         return False
 
     def ignore_check(self, FromWxid: str, SenderWxid: str):
