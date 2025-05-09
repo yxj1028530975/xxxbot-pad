@@ -1521,11 +1521,6 @@ class XYBot:
                 message["Content"] = content[len(wakeup_word):].strip()
                 logger.info(f"检测到群聊唤醒词: {wakeup_word}, 处理后内容: {message['Content']}")
 
-                # 将机器人的wxid添加到Ats列表中，模拟@机器人的效果
-                if self.wxid and self.wxid not in message.get("Ats", []):
-                    message["Ats"] = message.get("Ats", []) + [self.wxid]
-                    logger.info(f"将机器人wxid {self.wxid} 添加到Ats列表中，模拟@机器人效果")
-
                 # 尝试将消息传递给AI对话插件
                 from utils.plugin_manager import plugin_manager
 
