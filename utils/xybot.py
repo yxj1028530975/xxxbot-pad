@@ -508,7 +508,7 @@ class XYBot:
 
     async def process_text_message(self, message: Dict[str, Any]):
         """处理文本消息"""
-        message["Content"] = message.get("Content", {}).get("string", "")
+        message["Content"] = message.get("Content", {}).get("string", "").replace("\n", "\\n")#修复文本消息里面包含有回车的情况
 
         if message["FromWxid"].endswith("@chatroom"):  # 群聊消息
             message["IsGroup"] = True
