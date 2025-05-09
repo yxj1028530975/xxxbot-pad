@@ -165,11 +165,15 @@ class MessageMonitor:
                     "收到语音消息" in line or
                     "收到被@消息" in line or  # 添加被@消息类型
                     "收到引用消息" in line or  # 添加引用消息类型
-                    "MsgId" in line):
+                    "MsgId" in line or
+                    "收到链接分享消息" in line):
 
                     # 特别处理图片消息，确保它们被正确识别
                     if "收到图片消息" in line:
                         logger.info(f"发现图片消息行: {line[:100]}...")
+                    # 特别处理链接分享消息，确保它们被正确识别
+                    elif "收到链接分享消息" in line:
+                        logger.info(f"发现链接分享消息行: {line[:100]}...")
 
                     logger.info(f"发现可能的消息行: {line[:100]}...")
 
@@ -504,6 +508,35 @@ class MessageMonitor:
                         msg_source = f'<msgsource><atuserlist>{at_users_str}</atuserlist></msgsource>'
                         msg_data["MsgSource"] = msg_source
 
+                    return msg_data
+                
+                # 特殊处理被@消息
+            if "收到链接分享消息" in line:
+                logger.info(f"检测到收到链接分享消息: {line}")
+                url_pattern = re.compile(r'消息ID:(\d+).*?来自:(.*?)[\s\:].*?发送人:(.*?)[\s\:].*?XML:(.*?)(?=$|\n)')
+                url_match = url_pattern.search(line)
+
+                if url_match:
+                    msg_id, from_user, sender, xml_content = url_match.groups()
+                    logger.info(f"成功解析链接分享消息: ID={msg_id}, 发送者={sender}, XML长度={len(xml_content)}")
+
+                    # 创建分享消息数据
+                    msg_data = {
+                        "MsgId": int(msg_id),
+                        "FromUserName": {"string": from_user},
+                        "MsgType": 6,  # SHARING 分享信息
+                        "Content": xml_content,
+                        "FromWxid": from_user,
+                        "SenderWxid": sender,
+                        "RawLogLine": line,  # 保存原始行
+                    }
+
+                    # 尝试从缓存添加发送者昵称
+                    if sender in user_nickname_cache:
+                        msg_data["SenderNickName"] = user_nickname_cache[sender]
+                        logger.info(f"为分享消息添加发送者昵称: {sender} -> {user_nickname_cache[sender]}")
+
+                    logger.info(f"成功从日志提取分享消息数据: ID={msg_id}, 发送者={sender}, 类型=6(分享信息)")
                     return msg_data
 
             # 处理普通消息
