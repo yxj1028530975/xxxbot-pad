@@ -27,7 +27,7 @@ debug = true               # 是否开启调试模式
 [XYBot]
 version = "v1.0.0"                    # 版本号，请勿修改
 ignore-protection = true             # 是否忽略风控保护机制，建议保持false
-enable-group-wakeup = true
+enable-group-wakeup = false
 group-wakeup-words = [
     "bot",
     "机器人",

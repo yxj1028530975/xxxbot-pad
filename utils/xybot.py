@@ -1506,7 +1506,7 @@ class XYBot:
             message: 消息字典
 
         Returns:
-            bool: 如果消息应该被处理返回True，否则返回False
+            bool: 如果消息应该被进一步处理返回True，否则返回False
         """
         # 如果不是群聊消息或者未启用群聊唤醒词功能，直接返回True（继续处理）
         if not message.get("IsGroup", False) or not self.enable_group_wakeup:
@@ -1521,43 +1521,31 @@ class XYBot:
                 message["Content"] = content[len(wakeup_word):].strip()
                 logger.info(f"检测到群聊唤醒词: {wakeup_word}, 处理后内容: {message['Content']}")
 
-                # 尝试将消息传递给AI对话插件
+                # 将机器人的wxid添加到Ats列表中，模拟@机器人的效果
+                if self.wxid and self.wxid not in message.get("Ats", []):
+                    message["Ats"] = message.get("Ats", []) + [self.wxid]
+                    logger.debug(f"将机器人wxid {self.wxid} 添加到Ats列表中，模拟@机器人效果")
+
+                # 尝试找到并调用Dify插件处理该消息
                 from utils.plugin_manager import plugin_manager
+                from utils.event_manager import EventManager  # 导入事件管理器
 
-                # 查找Dify插件
-                dify_plugin = None
-                for plugin_name, plugin in plugin_manager.plugins.items():
-                    if plugin_name == "Dify":
-                        dify_plugin = plugin
-                        break
+                # 创建一个临时消息对象，避免修改原消息
+                temp_message = message.copy()
 
-                if dify_plugin:
-                    logger.info(f"找到Dify插件，尝试处理唤醒词消息")
-                    # 检查插件是否有处理文本消息的方法
-                    text_message_method = None
-                    for method_name in dir(dify_plugin):
-                        method = getattr(dify_plugin, method_name)
-                        if hasattr(method, '_event_type') and method._event_type == 'text_message':
-                            text_message_method = method
-                            break
+                # 直接触发事件系统的text_message事件，让所有插件处理该消息
+                # 这将确保消息只被处理一次
+                if self.ignore_protection or not protector.check(14400):
+                    # 异步触发事件，但不等待结果
+                    asyncio.create_task(EventManager.emit("text_message", self.bot, temp_message))
+                else:
+                    logger.warning("风控保护: 新设备登录后4小时内请挂机")
 
-                    if text_message_method:
-                        # 创建一个临时消息对象，模拟文本消息
-                        temp_message = message.copy()
+                # 返回False，表示消息已经被处理，不需要继续处理
+                return False
 
-                        # 调用插件的text_message处理方法
-                        result = await text_message_method(self.bot, temp_message)
-
-                        # 如果插件返回False，表示它处理了消息
-                        if result is False:
-                            logger.info(f"Dify插件成功处理了唤醒词消息")
-                            return False
-
-                return True
-
-        # 没有唤醒词，不处理该消息
-        logger.debug(f"群聊消息未包含唤醒词，忽略处理: {content}")
-        return False
+        # 没有唤醒词，返回True让消息继续传递给处理链
+        return True
 
     def ignore_check(self, FromWxid: str, SenderWxid: str):
         # 过滤公众号消息（公众号wxid通常以gh_开头）
