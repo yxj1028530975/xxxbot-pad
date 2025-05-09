@@ -27,11 +27,11 @@ debug = true               # 是否开启调试模式
 [XYBot]
 version = "v1.0.0"                    # 版本号，请勿修改
 ignore-protection = true             # 是否忽略风控保护机制，建议保持false
-
-# 群聊唤醒词设置
-enable-group-wakeup = true           # 是否启用群聊唤醒词功能
-group-wakeup-words = ["bot", "机器人"]  # 群聊唤醒词列表，消息需以这些词开头才会触发处理
-
+enable-group-wakeup = true
+group-wakeup-words = [
+    "bot",
+    "机器人",
+]
 # GitHub加速服务设置
 # 可选值: "", "https://ghfast.top/", "https://gh-proxy.com/", "https://mirror.ghproxy.com/"
 # 空字符串表示直连不使用加速
@@ -73,7 +73,6 @@ disabled-plugins = [
     "RedPacket",
     "VideoDemand",
     "SignIn",
-    "YujieSajiao",
 ]   # 禁用的插件列表，不需要的插件名称填在这里
 timezone = "Asia/Shanghai"             # 时区设置，中国用户使用 Asia/Shanghai
 

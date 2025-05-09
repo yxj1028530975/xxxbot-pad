@@ -615,6 +615,11 @@ class Dify(PluginBase):
                         is_at_bot = True
                         break
 
+                    # 特殊处理：检查是否是@小小x这样的格式（可能有空格）
+                    if content.lower().startswith(f'@{robot_name.lower()}'):
+                        is_at_bot = True
+                        break
+
             # 只有当用户@了机器人时，才处理引用消息
             if is_at and is_at_bot:
                 # 处理@机器人的引用消息
@@ -834,6 +839,11 @@ class Dify(PluginBase):
                 if content.startswith(f'@{robot_name}'):
                     logger.debug(f"消息内容以@{robot_name}开头")
                     return True
+
+                # 特殊处理：检查是否是@小小x这样的格式（可能有空格）
+                if content.lower().startswith(f'@{robot_name.lower()}'):
+                    logger.debug(f"消息内容以@{robot_name}开头（忽略大小写）")
+                    return True
             # 如果@的不是机器人，继续检查其他条件
 
         # 检查普通消息中的@
@@ -845,6 +855,18 @@ class Dify(PluginBase):
         # 如果是引用消息，检查消息类型
         if msg_type == 49 or msg_type == 57 or "Quote" in message:  # 引用消息类型
             logger.debug(f"检测到引用消息: {msg_type}, Quote字段: {'Quote' in message}")
+
+            # 特殊处理：如果消息内容以@开头，这是一个强烈的信号，表明用户@了某人
+            if content.startswith('@'):
+                for robot_name in self.robot_names:
+                    if content.startswith(f'@{robot_name}'):
+                        logger.debug(f"引用消息内容以@{robot_name}开头")
+                        return True
+
+                    # 特殊处理：检查是否是@小小x这样的格式（可能有空格）
+                    if content.lower().startswith(f'@{robot_name.lower()}'):
+                        logger.debug(f"引用消息内容以@{robot_name}开头（忽略大小写）")
+                        return True
 
             # 如果有Quote字段，检查引用的消息内容
             if "Quote" in message:
@@ -888,9 +910,11 @@ class Dify(PluginBase):
         if "Ats" in message and message["Ats"]:
             logger.debug(f"消息包含Ats字段: {message['Ats']}")
             # 如果机器人的wxid在Ats列表中，则返回True
-            if "wxid_uz9za1pqr3ea22" in message["Ats"]:
-                logger.debug("在Ats字段中发现机器人的wxid")
-                return True
+            # 检查所有可能的机器人wxid
+            for wxid in ["wxid_uz9za1pqr3ea22", "wxid_p60yfpl5zg2m29"]:
+                if wxid in message["Ats"]:
+                    logger.debug(f"在Ats字段中发现机器人的wxid: {wxid}")
+                    return True
 
         return False
 
@@ -2444,6 +2468,22 @@ class Dify(PluginBase):
             logger.error(f"下载或发送文件失败: {e}")
             logger.error(traceback.format_exc())
 
+    # 添加一个专门处理引用消息的方法
+    @on_xml_message(priority=99)  # 使用最高优先级确保最先处理
+    async def handle_xml_quote(self, bot: WechatAPIClient, message: dict):
+        """专门处理XML格式的引用消息"""
+        if not self.enable:
+            return True
+
+        # 检查是否是引用消息
+        if message.get("Quote"):
+            logger.info("Dify: 检测到XML引用消息，直接处理")
+            # 直接调用引用消息处理方法
+            return await self.handle_quote(bot, message)
+
+        # 不是引用消息，交给下一个处理器处理
+        return True
+
     @on_xml_message(priority=98)  # 使用高优先级确保先处理
     async def handle_xml_file(self, bot: WechatAPIClient, message: dict):
         """处理XML格式的文件消息"""
@@ -2455,11 +2495,6 @@ class Dify(PluginBase):
             content = message.get("Content", "")
             if not content or not isinstance(content, str) or not content.strip().startswith("<"):
                 logger.warning(f"Dify: 消息内容不是XML格式: {content[:100]}")
-                return True
-
-            # 如果是引用消息，检查是否有Quote字段
-            if message.get("Quote"):
-                logger.info("Dify: 检测到引用消息，使用普通文本处理")
                 return True
 
             # 解析XML内容

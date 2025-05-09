@@ -514,7 +514,7 @@ class XYBot:
 
     async def process_text_message(self, message: Dict[str, Any]):
         """处理文本消息"""
-        message["Content"] = message.get("Content", {}).get("string", "").replace("\n", "\\n")#修复文本消息里面包含有回车的情况
+        message["Content"] = message.get("Content", {}).get("string", "")
 
         if message["FromWxid"].endswith("@chatroom"):  # 群聊消息
             message["IsGroup"] = True
@@ -578,7 +578,7 @@ class XYBot:
                     message["SenderWxid"], message["Ats"], message["Content"])
 
         # 检查是否需要处理该消息（群聊唤醒词检查）
-        should_process = self.check_group_wakeup_word(message)
+        should_process = await self.check_group_wakeup_word(message)
 
         # 群聊消息和私聊消息都处理
         # 无论是否@机器人，都处理消息
@@ -805,7 +805,7 @@ class XYBot:
         )
 
         # 检查是否需要处理该消息（群聊唤醒词检查）
-        should_process = self.check_group_wakeup_word(message)
+        should_process = await self.check_group_wakeup_word(message)
 
         if should_process and self.ignore_check(message["FromWxid"], message["ActualUserWxid"]):
             if self.ignore_protection or not protector.check(14400):
@@ -1499,7 +1499,7 @@ class XYBot:
 
         return False
 
-    def check_group_wakeup_word(self, message: Dict[str, Any]) -> bool:
+    async def check_group_wakeup_word(self, message: Dict[str, Any]) -> bool:
         """检查群聊消息是否包含唤醒词
 
         Args:
@@ -1520,6 +1520,44 @@ class XYBot:
                 message["OriginalContent"] = message["Content"]
                 message["Content"] = content[len(wakeup_word):].strip()
                 logger.info(f"检测到群聊唤醒词: {wakeup_word}, 处理后内容: {message['Content']}")
+
+                # 将机器人的wxid添加到Ats列表中，模拟@机器人的效果
+                if self.wxid and self.wxid not in message.get("Ats", []):
+                    message["Ats"] = message.get("Ats", []) + [self.wxid]
+                    logger.info(f"将机器人wxid {self.wxid} 添加到Ats列表中，模拟@机器人效果")
+
+                # 尝试将消息传递给AI对话插件
+                from utils.plugin_manager import plugin_manager
+
+                # 查找Dify插件
+                dify_plugin = None
+                for plugin_name, plugin in plugin_manager.plugins.items():
+                    if plugin_name == "Dify":
+                        dify_plugin = plugin
+                        break
+
+                if dify_plugin:
+                    logger.info(f"找到Dify插件，尝试处理唤醒词消息")
+                    # 检查插件是否有处理文本消息的方法
+                    text_message_method = None
+                    for method_name in dir(dify_plugin):
+                        method = getattr(dify_plugin, method_name)
+                        if hasattr(method, '_event_type') and method._event_type == 'text_message':
+                            text_message_method = method
+                            break
+
+                    if text_message_method:
+                        # 创建一个临时消息对象，模拟文本消息
+                        temp_message = message.copy()
+
+                        # 调用插件的text_message处理方法
+                        result = await text_message_method(self.bot, temp_message)
+
+                        # 如果插件返回False，表示它处理了消息
+                        if result is False:
+                            logger.info(f"Dify插件成功处理了唤醒词消息")
+                            return False
+
                 return True
 
         # 没有唤醒词，不处理该消息
