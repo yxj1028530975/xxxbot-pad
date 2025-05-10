@@ -1387,6 +1387,8 @@ class WX849Channel(ChatChannel):
             self._process_text_message(cmsg)
         elif msg_type in [3, "3", "Image"]:
             self._process_image_message(cmsg)
+        elif msg_type in [6, "6", "Sharing"]:
+            self._process_sharing_message(cmsg)
         elif msg_type in [34, "34", "Voice"]:
             self._process_voice_message(cmsg)
         elif msg_type in [43, "43", "Video"]:
@@ -2611,6 +2613,70 @@ class WX849Channel(ChatChannel):
 
         logger.error(f"[WX849] 未找到图片文件: msg_id={msg_id}")
         return None
+    
+    def _process_sharing_message(self, cmsg):
+        """处理分享消息"""
+        import re
+        import xml.etree.ElementTree as ET
+
+        cmsg.ctype = ContextType.SHARING
+
+        # 处理群聊/私聊消息发送者
+        if cmsg.is_group or cmsg.from_user_id.endswith("@chatroom"):
+            cmsg.is_group = True
+            split_content = cmsg.content.split(":\n", 1)
+            if len(split_content) > 1:
+                cmsg.sender_wxid = split_content[0]
+                cmsg.content = split_content[1]
+            else:
+                # 处理没有换行的情况
+                split_content = cmsg.content.split(":", 1)
+                if len(split_content) > 1:
+                    cmsg.sender_wxid = split_content[0]
+                    cmsg.content = split_content[1]
+                else:
+                    cmsg.content = split_content[0]
+                    cmsg.sender_wxid = ""
+
+            # 设置actual_user_id和actual_user_nickname
+            cmsg.actual_user_id = cmsg.sender_wxid
+            cmsg.actual_user_nickname = cmsg.sender_wxid
+        else:
+            # 私聊消息
+            cmsg.sender_wxid = cmsg.from_user_id
+            cmsg.is_group = False
+
+            # 私聊消息也设置actual_user_id和actual_user_nickname
+            cmsg.actual_user_id = cmsg.from_user_id
+            cmsg.actual_user_nickname = cmsg.from_user_id
+
+        # 解析分享信息
+        try:
+            logger.debug(f"解析分享消息内容: {cmsg.content[:100]}")
+            # 检查内容是否是XML
+            if cmsg.content and (cmsg.content.startswith('<?xml') or cmsg.content.startswith('<msg>')):
+                try:
+                    root = ET.fromstring(cmsg.content)
+                    appmsg_element = root.find('appmsg')
+                    if appmsg_element is not None:
+                        url_element = appmsg_element.find('url')
+                        if url_element is not None:
+                            cmsg.content = url_element.text
+                            logger.debug(f"[WX849] 解析分享消息XML成功: URL={cmsg.content}")
+                        else:
+                            logger.warning(f"[WX849] XML中未找到URL")
+                    else:
+                        logger.warning(f"[WX849] XML中未找到appmsg")
+                except ET.ParseError as xml_err:
+                    # XML解析失败，创建一个默认的image_info
+                    logger.warning(f"[WX849] XML解析失败: {xml_err}")
+        except Exception as e:
+            logger.debug(f"解析分享消息失败: {e}, 内容: {cmsg.content[:100]}")
+            logger.debug(f"详细错误: {traceback.format_exc()}")
+
+        # 输出日志 - 修改为显示完整XML内容
+        logger.info(f"收到分享消息: ID:{cmsg.msg_id} 来自:{cmsg.from_user_id} 发送人:{cmsg.sender_wxid}")
+
 
     def _process_voice_message(self, cmsg):
         """处理语音消息"""

@@ -45,6 +45,12 @@ class XYBot:
 
         self.ignore_protection = main_config.get("XYBot", {}).get("ignore-protection", False)
 
+        # 读取群聊唤醒词配置
+        xybot_config = main_config.get("XYBot", {})
+        self.group_wakeup_words = xybot_config.get("group-wakeup-words", ["bot"])
+        self.enable_group_wakeup = xybot_config.get("enable-group-wakeup", True)
+        logger.info(f"群聊唤醒词: {self.group_wakeup_words}, 启用状态: {self.enable_group_wakeup}")
+
         # 从配置文件中读取消息过滤设置
         try:
             # 尝试从顶层读取设置
@@ -571,15 +577,12 @@ class XYBot:
                     message.get("MsgId", ""), message["FromWxid"],
                     message["SenderWxid"], message["Ats"], message["Content"])
 
-        # 检查是否是群聊消息
-        is_group_chat = message["FromWxid"].endswith("@chatroom")
+        # 检查是否需要处理该消息（群聊唤醒词检查）
+        should_process = await self.check_group_wakeup_word(message)
 
-        # 在群聊中，只处理@消息，忽略普通消息
-        if is_group_chat and self.wxid not in message.get("Ats", []):
-            logger.debug("群聊中的非@消息，忽略处理")
-            return
-
-        if self.ignore_check(message["FromWxid"], message["SenderWxid"]):
+        # 群聊消息和私聊消息都处理
+        # 无论是否@机器人，都处理消息
+        if should_process and self.ignore_check(message["FromWxid"], message["SenderWxid"]):
             if self.ignore_protection or not protector.check(14400):
                 await EventManager.emit("text_message", self.bot, message)
             else:
@@ -801,7 +804,10 @@ class XYBot:
             is_group=message["IsGroup"]
         )
 
-        if self.ignore_check(message["FromWxid"], message["ActualUserWxid"]):
+        # 检查是否需要处理该消息（群聊唤醒词检查）
+        should_process = await self.check_group_wakeup_word(message)
+
+        if should_process and self.ignore_check(message["FromWxid"], message["ActualUserWxid"]):
             if self.ignore_protection or not protector.check(14400):
                 await EventManager.emit("emoji_message", self.bot, message)
             else:
@@ -1331,6 +1337,60 @@ class XYBot:
                                         return True
                                 break
 
+                    # 4.1 检查插件的command属性（单数形式，如VideoDemand插件）
+                    if hasattr(plugin, 'command') and plugin.command:
+                        # 处理列表类型的command
+                        if isinstance(plugin.command, list):
+                            for cmd in plugin.command:
+                                if isinstance(cmd, str) and content.lower() == cmd.lower():
+                                    logger.info(f"检测到插件 {plugin_name} 的命令(单数形式): {cmd}")
+
+                                    # 检查插件是否有处理文本消息的方法
+                                    text_message_method = None
+                                    for method_name in dir(plugin):
+                                        method = getattr(plugin, method_name)
+                                        if hasattr(method, '_event_type') and method._event_type == 'text_message':
+                                            text_message_method = method
+                                            break
+
+                                    if text_message_method:
+                                        # 创建一个临时消息对象，模拟文本消息
+                                        temp_message = message.copy()
+                                        # 使用处理后的内容（移除了@部分）
+                                        temp_message["Content"] = content
+
+                                        # 调用插件的text_message处理方法
+                                        result = await text_message_method(self.bot, temp_message)
+
+                                        # 如果插件返回False，表示阻止后续处理
+                                        if result is False:
+                                            return True
+                                    break
+                        # 处理字符串类型的command
+                        elif isinstance(plugin.command, str) and content.lower() == plugin.command.lower():
+                            logger.info(f"检测到插件 {plugin_name} 的命令(单数形式): {plugin.command}")
+
+                            # 检查插件是否有处理文本消息的方法
+                            text_message_method = None
+                            for method_name in dir(plugin):
+                                method = getattr(plugin, method_name)
+                                if hasattr(method, '_event_type') and method._event_type == 'text_message':
+                                    text_message_method = method
+                                    break
+
+                            if text_message_method:
+                                # 创建一个临时消息对象，模拟文本消息
+                                temp_message = message.copy()
+                                # 使用处理后的内容（移除了@部分）
+                                temp_message["Content"] = content
+
+                                # 调用插件的text_message处理方法
+                                result = await text_message_method(self.bot, temp_message)
+
+                                # 如果插件返回False，表示阻止后续处理
+                                if result is False:
+                                    return True
+
                     # 5. 检查插件的所有可能的command属性
                     # 自动检测插件的所有属性，查找可能的命令
                     for attr_name in dir(plugin):
@@ -1438,6 +1498,54 @@ class XYBot:
             message["Content"] = original_message_content
 
         return False
+
+    async def check_group_wakeup_word(self, message: Dict[str, Any]) -> bool:
+        """检查群聊消息是否包含唤醒词
+
+        Args:
+            message: 消息字典
+
+        Returns:
+            bool: 如果消息应该被进一步处理返回True，否则返回False
+        """
+        # 如果不是群聊消息或者未启用群聊唤醒词功能，直接返回True（继续处理）
+        if not message.get("IsGroup", False) or not self.enable_group_wakeup:
+            return True
+
+        content = message.get("Content", "").strip()
+        # 检查消息是否以任一唤醒词开头
+        for wakeup_word in self.group_wakeup_words:
+            if content.lower().startswith(wakeup_word.lower()):
+                # 移除唤醒词，保留实际命令内容
+                message["OriginalContent"] = message["Content"]
+                message["Content"] = content[len(wakeup_word):].strip()
+                logger.info(f"检测到群聊唤醒词: {wakeup_word}, 处理后内容: {message['Content']}")
+
+                # 将机器人的wxid添加到Ats列表中，模拟@机器人的效果
+                if self.wxid and self.wxid not in message.get("Ats", []):
+                    message["Ats"] = message.get("Ats", []) + [self.wxid]
+                    logger.debug(f"将机器人wxid {self.wxid} 添加到Ats列表中，模拟@机器人效果")
+
+                # 尝试找到并调用Dify插件处理该消息
+                from utils.plugin_manager import plugin_manager
+                from utils.event_manager import EventManager  # 导入事件管理器
+
+                # 创建一个临时消息对象，避免修改原消息
+                temp_message = message.copy()
+
+                # 直接触发事件系统的text_message事件，让所有插件处理该消息
+                # 这将确保消息只被处理一次
+                if self.ignore_protection or not protector.check(14400):
+                    # 异步触发事件，但不等待结果
+                    asyncio.create_task(EventManager.emit("text_message", self.bot, temp_message))
+                else:
+                    logger.warning("风控保护: 新设备登录后4小时内请挂机")
+
+                # 返回False，表示消息已经被处理，不需要继续处理
+                return False
+
+        # 没有唤醒词，返回True让消息继续传递给处理链
+        return True
 
     def ignore_check(self, FromWxid: str, SenderWxid: str):
         # 过滤公众号消息（公众号wxid通常以gh_开头）
