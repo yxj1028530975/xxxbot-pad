@@ -1,6 +1,6 @@
 import os
 import sys
-import json 
+import json
 import time
 import asyncio
 import threading
@@ -132,8 +132,26 @@ config = {
     "password": "admin123",
     "debug": False,
     "secret_key": "xybotv2_admin_secret_key",
-    "max_history": 1000
+    "max_history": 1000,
+    "log_level": "INFO"  # 默认日志级别
 }
+
+# 设置日志级别函数
+def set_log_level(level):
+    """设置日志级别"""
+    # 注意：此函数不再重新配置日志处理器，只是更新日志级别
+    # 因为日志处理器已经在main.py中配置好了
+
+    # 获取所有现有的日志处理器
+    handlers = logger._core.handlers
+
+    # 更新控制台日志处理器的级别
+    for handler_id, handler in handlers.items():
+        # 只更新控制台日志处理器的级别，文件日志处理器保持DEBUG级别
+        if hasattr(handler, "_sink") and handler._sink == sys.stderr:
+            handler._level = logger.level(level).no
+
+    logger.info(f"管理后台日志级别已设置为: {level}")
 
 # WebSocket连接
 active_connections: List[WebSocket] = []
@@ -182,6 +200,10 @@ def load_config():
                         config["password"] = admin_config["password"]
                     if "debug" in admin_config:
                         config["debug"] = admin_config["debug"]
+                    if "log_level" in admin_config:
+                        config["log_level"] = admin_config["log_level"]
+                        # 使用设置日志级别函数
+                        set_log_level(admin_config["log_level"])
                     logger.info(f"从main_config.toml加载管理后台配置: {main_config_path}")
         else:
             # 如果main_config.toml不存在或没有Admin部分，尝试从config.json加载
@@ -1099,14 +1121,14 @@ def setup_routes():
     # 导入并注册切换账号相关路由
     try:
         # 使用绝对导入
-        from switch_account_api import register_switch_account_routes
+        from .switch_account_api import register_switch_account_routes
 
         # 然后注册路由，传入check_auth函数和更新机器人状态的函数
         register_switch_account_routes(app, check_auth, update_bot_status)
         logger.info("切换账号API路由注册成功")
 
         # 导入并注册系统配置API路由
-        from system_config_api import router as system_config_router
+        from .system_config_api import router as system_config_router
         app.include_router(system_config_router)
         logger.info("系统配置API路由注册成功")
     except Exception as e:
@@ -1116,7 +1138,7 @@ def setup_routes():
 
     # 导入并注册重启系统路由
     try:
-        from restart_api import register_restart_routes, restart_system
+        from .restart_api import register_restart_routes, restart_system
         register_restart_routes(app, check_auth)
         logger.info("重启系统API路由注册成功")
     except Exception as e:
@@ -1126,7 +1148,7 @@ def setup_routes():
 
     # 导入并注册账号管理路由
     try:
-        from account_manager import register_account_manager_routes
+        from .account_manager import register_account_manager_routes
         register_account_manager_routes(app, check_auth, update_bot_status, restart_system)
         logger.info("账号管理API路由注册成功")
 
@@ -7161,6 +7183,10 @@ def start_server(host_arg=None, port_arg=None, username_arg=None, password_arg=N
         config["password"] = password_arg
     if debug_arg is not None:
         config["debug"] = debug_arg
+
+    # 设置日志级别
+    if "log_level" in config:
+        set_log_level(config["log_level"])
 
     # 初始化应用
     init_app()

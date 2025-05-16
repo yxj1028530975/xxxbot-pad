@@ -5,6 +5,9 @@ import asyncio
 import io
 import html
 import re
+import os
+import base64
+import time
 
 from loguru import logger
 
@@ -633,6 +636,9 @@ class XYBot:
                 length = img_element.get('length')
                 md5 = img_element.get('md5')
                 logger.debug(f"解析图片XML成功: aeskey={aeskey}, length={length}, md5={md5}")
+
+                # 保存MD5信息到消息中，方便后续使用
+                message["ImageMD5"] = md5
         except Exception as e:
             logger.error("解析图片消息失败: {}, 内容: {}", e, message["Content"])
             return
@@ -703,11 +709,52 @@ class XYBot:
                 except Exception as e2:
                     logger.error(f"备用方法下载图片也失败: {e2}")
 
+        # 如果成功获取图片数据且有MD5值，保存到files目录
+        image_data = None
+        if message["Content"] and isinstance(message["Content"], str) and message["ImageMD5"]:
+            try:
+                # 解码base64获取图片数据
+                import base64
+                image_data = base64.b64decode(message["Content"])
+
+                # 确保files目录存在
+                files_dir = os.path.join(os.getcwd(), "files")
+                os.makedirs(files_dir, exist_ok=True)
+
+                # 根据MD5值生成文件名
+                file_extension = self._get_image_extension(image_data)
+                file_name = f"{message['ImageMD5']}.{file_extension}"
+                file_path = os.path.join(files_dir, file_name)
+
+                # 保存图片文件
+                with open(file_path, "wb") as f:
+                    f.write(image_data)
+                logger.info(f"图片已保存到: {file_path}")
+
+                # 将文件路径添加到消息中，方便后续使用
+                message["ImagePath"] = file_path
+            except Exception as save_error:
+                logger.error(f"保存图片文件失败: {save_error}")
+
         if self.ignore_check(message["FromWxid"], message["SenderWxid"]):
             if self.ignore_protection or not protector.check(14400):
                 await EventManager.emit("image_message", self.bot, message)
             else:
                 logger.warning("风控保护: 新设备登录后4小时内请挂机")
+
+    def _get_image_extension(self, image_data):
+        """根据图片数据判断文件扩展名"""
+        try:
+            from PIL import Image
+            import io
+
+            # 尝试打开图片并获取格式
+            img = Image.open(io.BytesIO(image_data))
+            fmt = img.format.lower() if img.format else "jpg"
+            return fmt
+        except Exception as e:
+            logger.error(f"获取图片格式失败: {e}")
+            return "jpg"  # 默认返回jpg
 
     async def process_voice_message(self, message: Dict[str, Any]):
         """处理语音消息"""
